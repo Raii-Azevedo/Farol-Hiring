@@ -1,0 +1,169 @@
+mes,mes_label,chapter,etapa,ordem_etapa,candidatos,conversao_pct,tempo_medio_dias,meta_sla_dias,excesso_dias,status_sla
+2026-03,Mar/2026,Data Science,Curriculo,1,108,,2.3,2,0.3,atencao
+2026-03,Mar/2026,Data Science,Fit Cultural,2,43,40.3,2.6,3,-0.4,ok
+2026-03,Mar/2026,Data Science,Case Tecnico,3,29,67.2,5.5,5,0.5,atencao
+2026-03,Mar/2026,Data Science,Entrevista Tecnica,4,20,69.8,8.1,5,3.1,atencao
+2026-03,Mar/2026,Data Science,Entrevista Final,5,14,68.9,3.2,4,-0.8,ok
+2026-03,Mar/2026,Data Science,Oferta,6,11,79.2,2.1,3,-0.9,ok
+2026-03,Mar/2026,Data Science,Contratado,7,7,67.2,,,,
+2026-04,Abr/2026,Data Science,Curriculo,1,114,,1.1,2,-0.9,ok
+2026-04,Abr/2026,Data Science,Fit Cultural,2,48,42.0,3.3,3,0.3,atencao
+2026-04,Abr/2026,Data Science,Case Tecnico,3,34,70.4,4.4,5,-0.6,ok
+2026-04,Abr/2026,Data Science,Entrevista Tecnica,4,23,68.9,9.4,5,4.4,atencao
+2026-04,Abr/2026,Data Science,Entrevista Final,5,16,68.1,3.0,4,-1.0,ok
+2026-04,Abr/2026,Data Science,Oferta,6,13,83.1,3.4,3,0.4,atencao
+2026-04,Abr/2026,Data Science,Contratado,7,9,68.4,,,,
+2026-05,Mai/2026,Data Science,Curriculo,1,120,,2.9,2,0.9,atencao
+2026-05,Mai/2026,Data Science,Fit Cultural,2,52,43.4,2.2,3,-0.8,ok
+2026-05,Mai/2026,Data Science,Case Tecnico,3,34,66.0,5.7,5,0.7,atencao
+2026-05,Mai/2026,Data Science,Entrevista Tecnica,4,24,69.0,10.7,5,5.7,critico
+2026-05,Mai/2026,Data Science,Entrevista Final,5,16,68.1,4.5,4,0.5,atencao
+2026-05,Mai/2026,Data Science,Oferta,6,13,80.4,3.9,3,0.9,atencao
+2026-05,Mai/2026,Data Science,Contratado,7,9,68.8,,,,
+2026-06,Jun/2026,Data Science,Curriculo,1,126,,2.7,2,0.7,atencao
+2026-06,Jun/2026,Data Science,Fit Cultural,2,58,46.2,3.7,3,0.7,atencao
+2026-06,Jun/2026,Data Science,Case Tecnico,3,41,70.8,5.4,5,0.4,atencao
+2026-06,Jun/2026,Data Science,Entrevista Tecnica,4,26,63.5,12,5,7,critico
+2026-06,Jun/2026,Data Science,Entrevista Final,5,16,62.3,3.6,4,-0.4,ok
+2026-06,Jun/2026,Data Science,Oferta,6,12,75.8,2.5,3,-0.5,ok
+2026-06,Jun/2026,Data Science,Contratado,7,8,66.0,,,,
+2026-03,Mar/2026,Data Engineering,Curriculo,1,135,,2.3,2,0.3,atencao
+2026-03,Mar/2026,Data Engineering,Fit Cultural,2,59,43.6,2.7,3,-0.3,ok
+2026-03,Mar/2026,Data Engineering,Case Tecnico,3,40,67.1,5,5,0,ok
+2026-03,Mar/2026,Data Engineering,Entrevista Tecnica,4,26,65.7,5.9,5,0.9,atencao
+2026-03,Mar/2026,Data Engineering,Entrevista Final,5,17,66.5,4.2,4,0.2,atencao
+2026-03,Mar/2026,Data Engineering,Oferta,6,13,76.7,3.5,3,0.5,atencao
+2026-03,Mar/2026,Data Engineering,Contratado,7,9,66.6,,,,
+2026-04,Abr/2026,Data Engineering,Curriculo,1,142,,3.0,2,1.0,atencao
+2026-04,Abr/2026,Data Engineering,Fit Cultural,2,66,46.4,3.1,3,0.1,atencao
+2026-04,Abr/2026,Data Engineering,Case Tecnico,3,48,71.8,5.4,5,0.4,atencao
+2026-04,Abr/2026,Data Engineering,Entrevista Tecnica,4,34,71.4,5.6,5,0.6,atencao
+2026-04,Abr/2026,Data Engineering,Entrevista Final,5,21,62.3,3.1,4,-0.9,ok
+2026-04,Abr/2026,Data Engineering,Oferta,6,17,78.2,2.5,3,-0.5,ok
+2026-04,Abr/2026,Data Engineering,Contratado,7,11,67.1,,,,
+2026-05,Mai/2026,Data Engineering,Curriculo,1,150,,2.8,2,0.8,atencao
+2026-05,Mai/2026,Data Engineering,Fit Cultural,2,65,43.1,3.3,3,0.3,atencao
+2026-05,Mai/2026,Data Engineering,Case Tecnico,3,45,69.0,6.7,5,1.7,atencao
+2026-05,Mai/2026,Data Engineering,Entrevista Tecnica,4,32,72.1,4.9,5,-0.1,ok
+2026-05,Mai/2026,Data Engineering,Entrevista Final,5,20,62.6,3.5,4,-0.5,ok
+2026-05,Mai/2026,Data Engineering,Oferta,6,16,80.6,2.5,3,-0.5,ok
+2026-05,Mai/2026,Data Engineering,Contratado,7,12,70.8,,,,
+2026-06,Jun/2026,Data Engineering,Curriculo,1,158,,1.8,2,-0.2,ok
+2026-06,Jun/2026,Data Engineering,Fit Cultural,2,66,42.2,4.0,3,1.0,atencao
+2026-06,Jun/2026,Data Engineering,Case Tecnico,3,47,70.1,8,5,3,atencao
+2026-06,Jun/2026,Data Engineering,Entrevista Tecnica,4,30,63.9,4.1,5,-0.9,ok
+2026-06,Jun/2026,Data Engineering,Entrevista Final,5,18,61.1,4.3,4,0.3,atencao
+2026-06,Jun/2026,Data Engineering,Oferta,6,15,82.9,2.8,3,-0.2,ok
+2026-06,Jun/2026,Data Engineering,Contratado,7,10,65.6,,,,
+2026-03,Mar/2026,Analytics Engineering,Curriculo,1,63,,3.0,2,1.0,atencao
+2026-03,Mar/2026,Analytics Engineering,Fit Cultural,2,29,45.3,3.9,3,0.9,atencao
+2026-03,Mar/2026,Analytics Engineering,Case Tecnico,3,21,73.6,4.0,5,-1.0,ok
+2026-03,Mar/2026,Analytics Engineering,Entrevista Tecnica,4,15,70.2,5.4,5,0.4,atencao
+2026-03,Mar/2026,Analytics Engineering,Entrevista Final,5,10,65.4,6.1,3,3.1,atencao
+2026-03,Mar/2026,Analytics Engineering,Oferta,6,7,77.7,3.3,3,0.3,atencao
+2026-03,Mar/2026,Analytics Engineering,Contratado,7,5,66.1,,,,
+2026-04,Abr/2026,Analytics Engineering,Curriculo,1,66,,1.9,2,-0.1,ok
+2026-04,Abr/2026,Analytics Engineering,Fit Cultural,2,33,49.5,3.8,3,0.8,atencao
+2026-04,Abr/2026,Analytics Engineering,Case Tecnico,3,22,67.6,5.0,5,0.0,ok
+2026-04,Abr/2026,Analytics Engineering,Entrevista Tecnica,4,14,64.8,5.8,5,0.8,atencao
+2026-04,Abr/2026,Analytics Engineering,Entrevista Final,5,10,68.7,7.4,3,4.4,atencao
+2026-04,Abr/2026,Analytics Engineering,Oferta,6,8,78.0,3.3,3,0.3,atencao
+2026-04,Abr/2026,Analytics Engineering,Contratado,7,5,71.1,,,,
+2026-05,Mai/2026,Analytics Engineering,Curriculo,1,70,,2.5,2,0.5,atencao
+2026-05,Mai/2026,Analytics Engineering,Fit Cultural,2,32,45.4,3.6,3,0.6,atencao
+2026-05,Mai/2026,Analytics Engineering,Case Tecnico,3,22,70.3,4.0,5,-1.0,ok
+2026-05,Mai/2026,Analytics Engineering,Entrevista Tecnica,4,15,66.2,4.0,5,-1.0,ok
+2026-05,Mai/2026,Analytics Engineering,Entrevista Final,5,10,69.3,8.7,3,5.7,critico
+2026-05,Mai/2026,Analytics Engineering,Oferta,6,9,83.8,3.7,3,0.7,atencao
+2026-05,Mai/2026,Analytics Engineering,Contratado,7,6,68.1,,,,
+2026-06,Jun/2026,Analytics Engineering,Curriculo,1,74,,2.8,2,0.8,atencao
+2026-06,Jun/2026,Analytics Engineering,Fit Cultural,2,36,49.5,2.2,3,-0.8,ok
+2026-06,Jun/2026,Analytics Engineering,Case Tecnico,3,25,69.9,4.1,5,-0.9,ok
+2026-06,Jun/2026,Analytics Engineering,Entrevista Tecnica,4,18,70.6,5.5,5,0.5,atencao
+2026-06,Jun/2026,Analytics Engineering,Entrevista Final,5,11,61.3,10,3,7,critico
+2026-06,Jun/2026,Analytics Engineering,Oferta,6,9,79.8,3.1,3,0.1,atencao
+2026-06,Jun/2026,Analytics Engineering,Contratado,7,6,67.7,,,,
+2026-03,Mar/2026,Data Consultant,Curriculo,1,54,,1.8,2,-0.2,ok
+2026-03,Mar/2026,Data Consultant,Fit Cultural,2,23,42.1,3.1,3,0.1,atencao
+2026-03,Mar/2026,Data Consultant,Case Tecnico,3,16,72.3,4.4,5,-0.6,ok
+2026-03,Mar/2026,Data Consultant,Entrevista Tecnica,4,11,66.1,6.0,5,1.0,atencao
+2026-03,Mar/2026,Data Consultant,Entrevista Final,5,7,66.5,3.9,4,-0.1,ok
+2026-03,Mar/2026,Data Consultant,Oferta,6,6,80.2,2.2,3,-0.8,ok
+2026-03,Mar/2026,Data Consultant,Contratado,7,4,67.2,,,,
+2026-04,Abr/2026,Data Consultant,Curriculo,1,57,,2.2,2,0.2,atencao
+2026-04,Abr/2026,Data Consultant,Fit Cultural,2,24,42.3,2.4,3,-0.6,ok
+2026-04,Abr/2026,Data Consultant,Case Tecnico,3,16,65.7,5.3,5,0.3,atencao
+2026-04,Abr/2026,Data Consultant,Entrevista Tecnica,4,10,65.3,5.8,5,0.8,atencao
+2026-04,Abr/2026,Data Consultant,Entrevista Final,5,7,68.6,3.1,4,-0.9,ok
+2026-04,Abr/2026,Data Consultant,Oferta,6,5,77.4,3.3,3,0.3,atencao
+2026-04,Abr/2026,Data Consultant,Contratado,7,4,67.1,,,,
+2026-05,Mai/2026,Data Consultant,Curriculo,1,60,,2.9,2,0.9,atencao
+2026-05,Mai/2026,Data Consultant,Fit Cultural,2,27,45.7,2.9,3,-0.1,ok
+2026-05,Mai/2026,Data Consultant,Case Tecnico,3,20,72.8,5.6,5,0.6,atencao
+2026-05,Mai/2026,Data Consultant,Entrevista Tecnica,4,13,64.9,4.2,5,-0.8,ok
+2026-05,Mai/2026,Data Consultant,Entrevista Final,5,8,64.3,3.8,4,-0.2,ok
+2026-05,Mai/2026,Data Consultant,Oferta,6,7,79.7,3.5,3,0.5,atencao
+2026-05,Mai/2026,Data Consultant,Contratado,7,5,71.7,,,,
+2026-06,Jun/2026,Data Consultant,Curriculo,1,63,,1.2,2,-0.8,ok
+2026-06,Jun/2026,Data Consultant,Fit Cultural,2,28,44.0,2.7,3,-0.3,ok
+2026-06,Jun/2026,Data Consultant,Case Tecnico,3,20,73.6,4.5,5,-0.5,ok
+2026-06,Jun/2026,Data Consultant,Entrevista Tecnica,4,13,64.9,4.9,5,-0.1,ok
+2026-06,Jun/2026,Data Consultant,Entrevista Final,5,9,64.2,3.6,4,-0.4,ok
+2026-06,Jun/2026,Data Consultant,Oferta,6,7,77.5,3.8,3,0.8,atencao
+2026-06,Jun/2026,Data Consultant,Contratado,7,5,69.4,,,,
+2026-03,Mar/2026,Software Engineering,Curriculo,1,81,,2.1,2,0.1,atencao
+2026-03,Mar/2026,Software Engineering,Fit Cultural,2,33,40.5,4.0,3,1.0,atencao
+2026-03,Mar/2026,Software Engineering,Case Tecnico,3,24,73.4,5.9,5,0.9,atencao
+2026-03,Mar/2026,Software Engineering,Entrevista Tecnica,4,17,72.3,5.7,5,0.7,atencao
+2026-03,Mar/2026,Software Engineering,Entrevista Final,5,11,61.7,4.0,4,0.0,ok
+2026-03,Mar/2026,Software Engineering,Oferta,6,8,77.1,2.8,3,-0.2,ok
+2026-03,Mar/2026,Software Engineering,Contratado,7,5,65.6,,,,
+2026-04,Abr/2026,Software Engineering,Curriculo,1,86,,3.0,2,1.0,atencao
+2026-04,Abr/2026,Software Engineering,Fit Cultural,2,36,42.7,3.6,3,0.6,atencao
+2026-04,Abr/2026,Software Engineering,Case Tecnico,3,25,69.6,4.8,5,-0.2,ok
+2026-04,Abr/2026,Software Engineering,Entrevista Tecnica,4,18,72.6,6.0,5,1.0,atencao
+2026-04,Abr/2026,Software Engineering,Entrevista Final,5,12,65.6,4.4,4,0.4,atencao
+2026-04,Abr/2026,Software Engineering,Oferta,6,9,76.5,2.6,3,-0.4,ok
+2026-04,Abr/2026,Software Engineering,Contratado,7,7,74.7,,,,
+2026-05,Mai/2026,Software Engineering,Curriculo,1,90,,2.1,2,0.1,atencao
+2026-05,Mai/2026,Software Engineering,Fit Cultural,2,43,47.5,2.1,3,-0.9,ok
+2026-05,Mai/2026,Software Engineering,Case Tecnico,3,30,70.8,5.0,5,0.0,ok
+2026-05,Mai/2026,Software Engineering,Entrevista Tecnica,4,22,71.5,4.3,5,-0.7,ok
+2026-05,Mai/2026,Software Engineering,Entrevista Final,5,15,69.6,3.2,4,-0.8,ok
+2026-05,Mai/2026,Software Engineering,Oferta,6,12,76.9,3.2,3,0.2,atencao
+2026-05,Mai/2026,Software Engineering,Contratado,7,8,71.8,,,,
+2026-06,Jun/2026,Software Engineering,Curriculo,1,94,,1.2,2,-0.8,ok
+2026-06,Jun/2026,Software Engineering,Fit Cultural,2,46,48.9,2.5,3,-0.5,ok
+2026-06,Jun/2026,Software Engineering,Case Tecnico,3,33,70.9,5.2,5,0.2,atencao
+2026-06,Jun/2026,Software Engineering,Entrevista Tecnica,4,22,67.2,5.2,5,0.2,atencao
+2026-06,Jun/2026,Software Engineering,Entrevista Final,5,14,65.2,4.9,4,0.9,atencao
+2026-06,Jun/2026,Software Engineering,Oferta,6,11,77.0,3.4,3,0.4,atencao
+2026-06,Jun/2026,Software Engineering,Contratado,7,7,67.4,,,,
+2026-03,Mar/2026,AI Engineering,Curriculo,1,50,,2.3,2,0.3,atencao
+2026-03,Mar/2026,AI Engineering,Fit Cultural,2,21,43.0,2.6,3,-0.4,ok
+2026-03,Mar/2026,AI Engineering,Case Tecnico,3,15,72.5,4.1,5,-0.9,ok
+2026-03,Mar/2026,AI Engineering,Entrevista Tecnica,4,10,67.6,6.0,5,1.0,atencao
+2026-03,Mar/2026,AI Engineering,Entrevista Final,5,7,70.0,3.1,4,-0.9,ok
+2026-03,Mar/2026,AI Engineering,Oferta,6,6,77.1,2.5,3,-0.5,ok
+2026-03,Mar/2026,AI Engineering,Contratado,7,4,74.3,,,,
+2026-04,Abr/2026,AI Engineering,Curriculo,1,52,,2.8,2,0.8,atencao
+2026-04,Abr/2026,AI Engineering,Fit Cultural,2,23,43.7,2.3,3,-0.7,ok
+2026-04,Abr/2026,AI Engineering,Case Tecnico,3,17,73.3,5.4,5,0.4,atencao
+2026-04,Abr/2026,AI Engineering,Entrevista Tecnica,4,12,69.1,6.0,5,1.0,atencao
+2026-04,Abr/2026,AI Engineering,Entrevista Final,5,8,66.5,3.0,4,-1.0,ok
+2026-04,Abr/2026,AI Engineering,Oferta,6,6,83.2,2.6,3,-0.4,ok
+2026-04,Abr/2026,AI Engineering,Contratado,7,5,71.6,,,,
+2026-05,Mai/2026,AI Engineering,Curriculo,1,55,,1.3,2,-0.7,ok
+2026-05,Mai/2026,AI Engineering,Fit Cultural,2,23,41.2,2.2,3,-0.8,ok
+2026-05,Mai/2026,AI Engineering,Case Tecnico,3,16,70.5,4.5,5,-0.5,ok
+2026-05,Mai/2026,AI Engineering,Entrevista Tecnica,4,11,69.0,5.4,5,0.4,atencao
+2026-05,Mai/2026,AI Engineering,Entrevista Final,5,7,62.0,4.3,4,0.3,atencao
+2026-05,Mai/2026,AI Engineering,Oferta,6,5,77.6,3.0,3,0.0,ok
+2026-05,Mai/2026,AI Engineering,Contratado,7,4,74.1,,,,
+2026-06,Jun/2026,AI Engineering,Curriculo,1,58,,1.2,2,-0.8,ok
+2026-06,Jun/2026,AI Engineering,Fit Cultural,2,26,44.2,2.6,3,-0.4,ok
+2026-06,Jun/2026,AI Engineering,Case Tecnico,3,17,65.0,5.5,5,0.5,atencao
+2026-06,Jun/2026,AI Engineering,Entrevista Tecnica,4,12,69.4,4.5,5,-0.5,ok
+2026-06,Jun/2026,AI Engineering,Entrevista Final,5,8,67.4,4.1,4,0.1,atencao
+2026-06,Jun/2026,AI Engineering,Oferta,6,6,79.3,2.0,3,-1.0,ok
+2026-06,Jun/2026,AI Engineering,Contratado,7,4,65.8,,,,

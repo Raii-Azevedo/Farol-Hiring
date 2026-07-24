@@ -1,0 +1,7 @@
+data,hora,chapter,senioridade_afetada,farol_anterior,farol_novo,motivo,notificado_google_chat
+2026-03-10,09:15,Data Consultant,Pleno,manter,acelerar,Novo projeto forecast confirmado aumentou demanda de Pleno,sim
+2026-04-02,08:40,Analytics Engineering,Senior,manter,pausar,Oferta ajustada ultrapassou demanda apos duas contratacoes no mesmo mes,sim
+2026-05-18,10:05,Data Engineering,Pleno,acelerar,manter,Pipe qualificado cresceu e reduziu o gap para dentro da faixa neutra,sim
+2026-06-12,09:23,Data Science,Pleno,manter,acelerar,Demanda liquida subiu de 4.2 para 8.0 (novo projeto forecast confirmado),sim
+2026-06-12,09:23,Data Consultant,Pleno,acelerar,acelerar,Status mantido - gap seguiu acima de 20% da demanda,sim
+2026-06-20,14:10,Analytics Engineering,Senior,pausar,pausar,Gargalo em Entrevista Final (10 dias vs meta de 3) segue sem resolucao,nao

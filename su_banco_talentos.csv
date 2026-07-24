@@ -1,0 +1,9 @@
+candidato,chapter,senioridade,dias_no_banco,probabilidade_reativacao_pct,urgencia_gap_chapter_pct,score_priorizacao,status
+Amanda Silva,Data Science,Pleno,45,65,32.5,0.317,aguardando
+Bruno Costa,Data Engineering,Senior,12,90,7.5,0.076,aguardando
+Carla Mendes,Analytics Engineering,Junior,78,30,0,0.028,risco_perda
+Daniel Lima,Data Science,Staff,23,80,32.5,0.326,aguardando
+Eduarda Rocha,Data Consultant,Pleno,60,45,28.3,0.212,risco_perda
+Felipe Santos,Data Engineering,Pleno,15,72,7.5,0.063,aguardando
+Gabriela Melo,Analytics Engineering,Pleno,8,85,0,0.046,aguardando
+Henrique Alves,Data Consultant,Senior,34,55,28.3,0.214,aguardando
