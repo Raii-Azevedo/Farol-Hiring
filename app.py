@@ -1,12 +1,13 @@
 """
-Farol de Hiring — protótipo Streamlit (branding Artefact)
-Le farol_executivo.csv e funil_pipe.csv (mock) e reproduz as duas paginas
-definidas no discovery: Farol Executivo e Visao do Pipe.
+Farol de Hiring — protótipo Streamlit (branding Artefact, light/dark)
+Le farol_executivo.csv, funil_pipe.csv e propostas_recusadas.csv (mock) e
+reproduz as duas paginas definidas no discovery: Farol Executivo e Visao do Pipe.
 
 Rodar:
     pip install -r requirements.txt
     streamlit run app.py
-(os CSVs e a pasta assets/ precisam estar na mesma pasta que este arquivo)
+(os CSVs, a pasta assets/ e a pasta .streamlit/ precisam estar na mesma pasta
+que este arquivo)
 """
 
 import base64
@@ -19,7 +20,9 @@ import streamlit as st
 from PIL import Image
 
 # ---------------------------------------------------------------------------
-# Paleta oficial — extraída do "NEW Branding Guide Artefact - Nov 2024.pptx"
+# Paleta de marca — extraída do "NEW Branding Guide Artefact - Nov 2024.pptx".
+# Essas cores NÃO mudam entre claro/escuro (gradiente do header, azuis e rosa
+# usados nos gráficos) — só o "fundo/superfície/texto" da página muda de tema.
 # ---------------------------------------------------------------------------
 DARK_BLUE = "#002244"
 MEDIUM_BLUE = "#0D1634"
@@ -28,19 +31,53 @@ PURPLE = "#752E7D"
 PINK = "#FF0066"
 GRADIENT_CSS = f"linear-gradient(120deg, {DARK_BLUE} 0%, {ARTEFACT_BLUE} 38%, {PURPLE} 70%, {PINK} 100%)"
 
-INK = "#0B1330"
-MUTED = "#66708A"
-PAPER = "#F5F7FB"
-LINE = "#E4E8F2"
-
-# cores semânticas do farol (não são cores de marca — são o próprio semáforo)
+# cores semânticas do farol (não são cores de marca — são o próprio semáforo,
+# iguais nos dois temas; só o "fundo" do badge muda)
 GREEN, AMBER, RED, GRAY = "#12B76A", "#F5A623", "#E5484D", "#B7BECF"
-GREEN_BG, AMBER_BG, RED_BG, GRAY_BG = "#E7F9F1", "#FFF6E5", "#FDECEC", "#F1F3F8"
 
 STATUS_COLOR = {"acelerar": GREEN, "manter": AMBER, "pausar": RED, "sem_dado": GRAY}
-STATUS_BG = {"acelerar": GREEN_BG, "manter": AMBER_BG, "pausar": RED_BG, "sem_dado": GRAY_BG}
 STATUS_ICON = {"acelerar": "🟢", "manter": "🟡", "pausar": "🔴", "sem_dado": "⚪"}
 STATUS_LABEL = {"acelerar": "ACELERAR", "manter": "MANTER", "pausar": "PAUSAR", "sem_dado": "SEM DADO"}
+
+STATUS_BG_BY_THEME = {
+    "light": {"acelerar": "#E7F9F1", "manter": "#FFF6E5", "pausar": "#FDECEC", "sem_dado": "#F1F3F8"},
+    "dark": {
+        "acelerar": "rgba(18,183,106,.20)",
+        "manter": "rgba(245,166,35,.22)",
+        "pausar": "rgba(229,72,77,.22)",
+        "sem_dado": "rgba(255,255,255,.10)",
+    },
+}
+
+# paletas de "canvas" (fundo/superficie/texto/borda) por tema
+PALETTES = {
+    "light": {
+        "bg": "#F5F7FB",
+        "surface": "#FFFFFF",
+        "surface2": "#F5F7FB",
+        "ink": "#0B1330",
+        "muted": "#66708A",
+        "line": "#E4E8F2",
+        "shadow": "rgba(11,19,48,.04)",
+        "shadow_hover": "rgba(11,19,48,.09)",
+        "heat_low": "#F1F3F8",
+        "tooltip_bg": "#0B1330",
+        "tooltip_text": "#FFFFFF",
+    },
+    "dark": {
+        "bg": MEDIUM_BLUE,
+        "surface": "#152246",
+        "surface2": "#1B2B57",
+        "ink": "#F2F4FA",
+        "muted": "#9AA5C7",
+        "line": "rgba(255,255,255,.12)",
+        "shadow": "rgba(0,0,0,.25)",
+        "shadow_hover": "rgba(0,0,0,.45)",
+        "heat_low": "#1B2B57",
+        "tooltip_bg": "#F2F4FA",
+        "tooltip_text": "#0B1330",
+    },
+}
 
 # nomes reais do pipe, conforme o deck "Projeto Farol de Contratacao" (jun/2026)
 STAGES_ORDER = [
@@ -69,8 +106,20 @@ FAVICON = Image.open(_favicon_path) if _favicon_path.exists() else "🚦"
 st.set_page_config(page_title="Farol de Hiring · Artefact", page_icon=FAVICON, layout="wide")
 
 # ---------------------------------------------------------------------------
+# Tema ativo (claro/escuro) — guardado em session_state, alternado pelo botão
+# logo abaixo do header. Precisa ser resolvido antes do bloco de CSS.
+# ---------------------------------------------------------------------------
+if "theme" not in st.session_state:
+    st.session_state["theme"] = "light"
+
+THEME = st.session_state["theme"]
+PAL = PALETTES[THEME]
+STATUS_BG = STATUS_BG_BY_THEME[THEME]
+
+# ---------------------------------------------------------------------------
 # CSS — tipografia Roboto (fonte oficial p/ ativos digitais), esconde o chrome
-# padrão do Streamlit e estiliza componentes no padrão do branding Artefact.
+# padrão do Streamlit e estiliza componentes no padrão do branding Artefact,
+# já considerando o tema ativo (PAL).
 # ---------------------------------------------------------------------------
 st.markdown(
     f"""
@@ -79,7 +128,7 @@ st.markdown(
 
         * {{ box-sizing: border-box; }}
         html, body, [class*="css"] {{ font-family: 'Roboto', sans-serif; }}
-        .stApp {{ background: {PAPER}; }}
+        .stApp {{ background: {PAL['bg']}; }}
 
         /* remove o chrome padrao do Streamlit por completo (display:none, nao
            visibility:hidden, senao o espaco reservado fica como uma faixa
@@ -92,7 +141,8 @@ st.markdown(
         }}
 
         /* ---- header de marca: banner contido dentro do container, nunca
-               "sangrando" pra fora dele (evita cortes/gaps em telas menores) ---- */
+               "sangrando" pra fora dele (evita cortes/gaps em telas menores).
+               O gradiente é igual nos dois temas — é a marca, não muda. ---- */
         .brand-header {{
             background: {GRADIENT_CSS};
             width: 100%;
@@ -100,8 +150,8 @@ st.markdown(
             display: flex; align-items: center; justify-content: space-between;
             flex-wrap: wrap; gap: 14px;
             border-radius: 18px;
-            box-shadow: 0 10px 28px rgba(0,34,68,.16);
-            margin-bottom: 22px;
+            box-shadow: 0 10px 28px rgba(0,34,68,.25);
+            margin-bottom: 10px;
         }}
         .brand-header .left {{ display: flex; align-items: center; gap: 14px; min-width: 0; }}
         .brand-header .left img {{ height: 30px; flex-shrink: 0; }}
@@ -115,36 +165,53 @@ st.markdown(
             .brand-header .right {{ text-align: left; }}
         }}
 
-        h1, h2, h3 {{ color: {INK}; font-weight: 700; }}
+        /* ---- botão de tema: pequeno, circular, alinhado à direita logo
+               abaixo do header ---- */
+        div[data-testid="column"]:has(.theme-toggle-marker) {{
+            display: flex; justify-content: flex-end;
+        }}
+        div[data-testid="column"]:has(.theme-toggle-marker) .stButton > button {{
+            width: 42px; height: 42px; border-radius: 50%; padding: 0;
+            font-size: 18px; line-height: 1; border: 1px solid {PAL['line']};
+            background: {PAL['surface']}; color: {PAL['ink']};
+            box-shadow: 0 2px 8px {PAL['shadow']};
+        }}
+        div[data-testid="column"]:has(.theme-toggle-marker) .stButton > button:hover {{
+            border-color: {PINK}; color: {PINK};
+        }}
+
+        h1, h2, h3 {{ color: {PAL['ink']}; font-weight: 700; }}
         h3 {{ font-size: 16px; margin: 4px 0 2px; }}
+        p, span, label, .stMarkdown, [data-testid="stCaptionContainer"] {{ color: {PAL['ink']}; }}
+        [data-testid="stCaptionContainer"] {{ color: {PAL['muted']} !important; }}
 
         /* ---- tabs como nav de site (quebra linha em telas estreitas) ---- */
-        .stTabs [data-baseweb="tab-list"] {{ gap: 4px; border-bottom: 1px solid {LINE}; flex-wrap: wrap; }}
+        .stTabs [data-baseweb="tab-list"] {{ gap: 4px; border-bottom: 1px solid {PAL['line']}; flex-wrap: wrap; }}
         .stTabs [data-baseweb="tab"] {{
             height: auto; padding: 10px 16px; background: transparent; border-radius: 10px 10px 0 0;
-            color: {MUTED}; font-weight: 600; font-size: 14px;
+            color: {PAL['muted']}; font-weight: 600; font-size: 14px;
         }}
-        .stTabs [aria-selected="true"] {{ color: {ARTEFACT_BLUE}; border-bottom: 3px solid {PINK}; }}
+        .stTabs [aria-selected="true"] {{ color: {ARTEFACT_BLUE if THEME == 'light' else '#8FA3FF'}; border-bottom: 3px solid {PINK}; }}
 
         /* ---- cards do farol: altura e alinhamento consistentes mesmo com
                nomes de chapter de tamanhos diferentes ---- */
         .farol-card {{
             position: relative;
-            border: 1px solid {LINE}; border-radius: 16px; padding: 18px 14px;
-            text-align: center; background: #fff;
-            box-shadow: 0 2px 10px rgba(11,19,48,.04);
+            border: 1px solid {PAL['line']}; border-radius: 16px; padding: 18px 14px;
+            text-align: center; background: {PAL['surface']};
+            box-shadow: 0 2px 10px {PAL['shadow']};
             transition: transform .15s ease, box-shadow .15s ease;
             display: flex; flex-direction: column; justify-content: space-between;
             min-height: 190px; width: 100%;
         }}
-        .farol-card:hover {{ transform: translateY(-3px); box-shadow: 0 10px 22px rgba(11,19,48,.09); }}
+        .farol-card:hover {{ transform: translateY(-3px); box-shadow: 0 10px 22px {PAL['shadow_hover']}; }}
 
         /* ---- tooltip de insight ao passar o mouse no card ---- */
         .farol-card[data-tip]:hover::after {{
             content: attr(data-tip);
             position: absolute; left: 50%; bottom: calc(100% + 10px);
             transform: translateX(-50%);
-            background: {INK}; color: #fff; font-family: 'Roboto', sans-serif;
+            background: {PAL['tooltip_bg']}; color: {PAL['tooltip_text']}; font-family: 'Roboto', sans-serif;
             font-size: 12px; font-weight: 400; line-height: 1.5; text-align: left;
             padding: 10px 13px; border-radius: 10px; width: 220px;
             box-shadow: 0 10px 24px rgba(0,0,0,.28); z-index: 30; pointer-events: none;
@@ -152,10 +219,10 @@ st.markdown(
         .farol-card[data-tip]:hover::before {{
             content: ""; position: absolute; left: 50%; bottom: 100%;
             transform: translateX(-50%); margin-bottom: 4px;
-            border: 6px solid transparent; border-top-color: {INK}; z-index: 30;
+            border: 6px solid transparent; border-top-color: {PAL['tooltip_bg']}; z-index: 30;
         }}
         .farol-card .chapter {{
-            font-weight: 700; font-size: 13px; color: {INK}; line-height: 1.3;
+            font-weight: 700; font-size: 13px; color: {PAL['ink']}; line-height: 1.3;
             min-height: 34px; display: flex; align-items: center; justify-content: center;
         }}
         .farol-card .light {{ font-size: 28px; margin: 6px 0; }}
@@ -163,20 +230,48 @@ st.markdown(
             display: inline-block; font-weight: 800; letter-spacing: .04em; font-size: 11px;
             padding: 4px 12px; border-radius: 20px; text-transform: uppercase;
         }}
-        .farol-card .kpis {{ font-size: 12px; color: {MUTED}; margin-top: 10px; line-height: 1.7; font-family: 'Roboto Mono', monospace; }}
-        .farol-card .kpis b {{ color: {INK}; }}
+        .farol-card .kpis {{ font-size: 12px; color: {PAL['muted']}; margin-top: 10px; line-height: 1.7; font-family: 'Roboto Mono', monospace; }}
+        .farol-card .kpis b {{ color: {PAL['ink']}; }}
 
-        /* ---- botao ---- */
+        /* ---- botao padrao ---- */
         .stButton > button {{
-            border-radius: 8px; border: 1px solid {LINE}; color: {ARTEFACT_BLUE};
+            border-radius: 8px; border: 1px solid {PAL['line']}; color: {ARTEFACT_BLUE if THEME == 'light' else '#8FA3FF'};
             font-weight: 600; font-size: 12.5px; padding: 4px 0; width: 100%;
+            background: {PAL['surface']};
         }}
         .stButton > button:hover {{ border-color: {PINK}; color: {PINK}; }}
 
+        /* ---- inputs (selectbox etc) ---- */
+        [data-testid="stSelectbox"] div[data-baseweb="select"] > div {{
+            background: {PAL['surface']}; border-color: {PAL['line']}; color: {PAL['ink']};
+        }}
+
+        /* ---- tabela custom (substitui st.dataframe p/ garantir legibilidade
+               em qualquer tema — cada célula respeita a paleta ativa) ---- */
+        .table-wrap {{
+            border: 1px solid {PAL['line']}; border-radius: 12px; overflow: hidden;
+            margin-bottom: 8px;
+        }}
+        table.app-table {{ width: 100%; border-collapse: collapse; font-size: 13px; }}
+        table.app-table th {{
+            text-align: left; background: {PAL['surface2']}; color: {PAL['muted']};
+            font-size: 11px; text-transform: uppercase; letter-spacing: .04em;
+            padding: 9px 12px; border-bottom: 1px solid {PAL['line']}; font-weight: 700;
+        }}
+        table.app-table td {{
+            padding: 9px 12px; border-bottom: 1px solid {PAL['line']};
+            color: {PAL['ink']}; background: {PAL['surface']};
+        }}
+        table.app-table tr:last-child td {{ border-bottom: none; }}
+        table.app-table .th-help {{ color: {PAL['muted']}; cursor: help; font-size: 10.5px; }}
+
+        /* ---- caixas de alerta nativas (info/warning/error) ---- */
+        div[data-testid="stAlertContainer"] {{ background: {PAL['surface']}; border: 1px solid {PAL['line']}; }}
+
         /* ---- footer custom ---- */
         .brand-footer {{
-            margin-top: 36px; padding-top: 16px; border-top: 1px solid {LINE};
-            color: {MUTED}; font-size: 11.5px; text-align: center;
+            margin-top: 36px; padding-top: 16px; border-top: 1px solid {PAL['line']};
+            color: {PAL['muted']}; font-size: 11.5px; text-align: center;
         }}
     </style>
     """,
@@ -205,6 +300,15 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
+
+# botão de alternância de tema — canto direito, logo abaixo do header
+_, col_toggle = st.columns([14, 1])
+with col_toggle:
+    st.markdown('<span class="theme-toggle-marker"></span>', unsafe_allow_html=True)
+    toggle_icon = "🌙" if THEME == "light" else "☀️"
+    if st.button(toggle_icon, key="theme_toggle", help="Alternar tema claro/escuro"):
+        st.session_state["theme"] = "dark" if THEME == "light" else "light"
+        st.rerun()
 
 st.info(
     "Dados mock para prototipagem — ainda não conectado ao pipeline real (BigQuery). "
@@ -275,13 +379,49 @@ def _html_attr(text: str) -> str:
     return text.replace('"', "&quot;")
 
 
-# paleta navy -> pink p/ heatmap e gráficos (no lugar do azul genérico do plotly)
-BRAND_SCALE = [
-    [0.0, "#F1F3F8"],
-    [0.35, "#8B93C7"],
-    [0.65, ARTEFACT_BLUE],
-    [1.0, PINK],
-]
+def render_table(df: pd.DataFrame, help_map: dict | None = None) -> None:
+    """Tabela HTML própria (em vez de st.dataframe) para garantir legibilidade
+    idêntica nos dois temas — o widget nativo do Streamlit não re-tematiza em
+    tempo real sem reiniciar o servidor."""
+    help_map = help_map or {}
+    thead_cells = "".join(
+        (
+            f'<th title="{_html_attr(help_map[c])}">{c} <span class="th-help">(?)</span></th>'
+            if c in help_map
+            else f"<th>{c}</th>"
+        )
+        for c in df.columns
+    )
+    body_rows = "".join(
+        "<tr>" + "".join(f"<td>{'' if pd.isna(v) else v}</td>" for v in row) + "</tr>"
+        for row in df.itertuples(index=False)
+    )
+    st.markdown(
+        f"""
+        <div class="table-wrap">
+        <table class="app-table">
+          <thead><tr>{thead_cells}</tr></thead>
+          <tbody>{body_rows}</tbody>
+        </table>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def brand_heat_scale() -> list:
+    return [[0.0, PAL["heat_low"]], [0.35, "#8B93C7"], [0.65, ARTEFACT_BLUE], [1.0, PINK]]
+
+
+CHART_LAYOUT = dict(
+    margin=dict(l=10, r=10, t=10, b=10),
+    plot_bgcolor=PAL["surface"],
+    paper_bgcolor=PAL["surface"],
+    font=dict(family="Roboto, sans-serif", color=PAL["ink"], size=13),
+    hoverlabel=dict(bgcolor=PAL["surface"], font_size=12.5, font_family="Roboto, sans-serif", font_color=PAL["ink"]),
+    xaxis=dict(gridcolor=PAL["line"], zerolinecolor=PAL["line"]),
+    yaxis=dict(gridcolor=PAL["line"], zerolinecolor=PAL["line"]),
+)
 
 tab_farol, tab_pipe = st.tabs(["Farol Executivo", "Visão do Pipe"])
 
@@ -390,16 +530,7 @@ with tab_farol:
                 hovertemplate="<b>%{y}</b><br>Demanda líquida de referência: <b>%{x:.0f}</b> pessoas<extra></extra>",
             )
         )
-        fig.update_layout(
-            height=260,
-            margin=dict(l=10, r=10, t=10, b=10),
-            xaxis_title="Pessoas",
-            plot_bgcolor="white",
-            paper_bgcolor="white",
-            font=dict(family="Roboto, sans-serif", color=INK, size=13),
-            legend=dict(orientation="h", yanchor="bottom", y=1.02),
-            hoverlabel=dict(bgcolor="white", font_size=12.5, font_family="Roboto, sans-serif"),
-        )
+        fig.update_layout(height=260, xaxis_title="Pessoas", legend=dict(orientation="h", yanchor="bottom", y=1.02), **CHART_LAYOUT)
         st.plotly_chart(fig, use_container_width=True)
 
     if not detail_semdado.empty:
@@ -409,34 +540,22 @@ with tab_farol:
         )
 
     with st.expander("Ver tabela detalhada por senioridade"):
-        st.dataframe(
-            detail[
-                ["senioridade", "demanda_liquida", "oferta_ajustada", "gap", "gap_pct", "farol_status"]
-            ].rename(
-                columns={
-                    "senioridade": "Senioridade",
-                    "demanda_liquida": "Demanda líquida",
-                    "oferta_ajustada": "Oferta ajustada",
-                    "gap": "Gap",
-                    "gap_pct": "Gap %",
-                    "farol_status": "Status",
-                }
-            ),
-            hide_index=True,
-            use_container_width=True,
-            column_config={
-                "Demanda líquida": st.column_config.NumberColumn(
-                    help="Pessoas necessárias no período (Artefactory): ongoing + forecast ponderado − alocações previstas."
-                ),
-                "Oferta ajustada": st.column_config.NumberColumn(
-                    format="%.1f",
-                    help="Candidatos do pipe (ponderados pela conversão esperada) + SU ponderado pela taxa de reativação.",
-                ),
-                "Gap %": st.column_config.NumberColumn(
-                    format="%.1f%%",
-                    help="(Demanda − Oferta) / Demanda. Acima de 20% = acelerar; entre -10% e 20% = manter; abaixo de -10% = pausar.",
-                ),
-                "Status": st.column_config.TextColumn(help="Farol calculado a partir do Gap %."),
+        tbl = detail[
+            ["senioridade", "demanda_liquida", "oferta_ajustada", "gap", "gap_pct", "farol_status"]
+        ].copy()
+        tbl["demanda_liquida"] = tbl["demanda_liquida"].map(lambda v: f"{v:.0f}")
+        tbl["oferta_ajustada"] = tbl["oferta_ajustada"].map(lambda v: f"{v:.1f}")
+        tbl["gap"] = tbl["gap"].map(lambda v: f"{v:+.1f}")
+        tbl["gap_pct"] = tbl["gap_pct"].map(lambda v: f"{v:+.1f}%" if pd.notna(v) else "—")
+        tbl["farol_status"] = tbl["farol_status"].map(lambda s: f"{STATUS_ICON[s]} {STATUS_LABEL[s]}")
+        tbl.columns = ["Senioridade", "Demanda líquida", "Oferta ajustada", "Gap", "Gap %", "Status"]
+        render_table(
+            tbl,
+            help_map={
+                "Demanda líquida": "Pessoas necessárias no período (Artefactory): ongoing + forecast ponderado − alocações previstas.",
+                "Oferta ajustada": "Candidatos do pipe (ponderados pela conversão esperada) + SU ponderado pela taxa de reativação.",
+                "Gap %": "(Demanda − Oferta) / Demanda. Acima de 20% = acelerar; entre -10% e 20% = manter; abaixo de -10% = pausar.",
+                "Status": "Farol calculado a partir do Gap %.",
             },
         )
 
@@ -462,14 +581,6 @@ with tab_pipe:
     dfp_mes = pipe_df[pipe_df["mes"] == mes_sel2]
     dfp_chapter = dfp_mes[dfp_mes["chapter"] == chapter_sel2].sort_values("ordem_etapa")
 
-    chart_layout = dict(
-        margin=dict(l=10, r=10, t=10, b=10),
-        plot_bgcolor="white",
-        paper_bgcolor="white",
-        font=dict(family="Roboto, sans-serif", color=INK, size=13),
-        hoverlabel=dict(bgcolor="white", font_size=12.5, font_family="Roboto, sans-serif"),
-    )
-
     col_a, col_b = st.columns(2)
     with col_a:
         st.markdown(f"##### Funil de volume — {chapter_sel2}")
@@ -479,7 +590,7 @@ with tab_pipe:
                 y=dfp_chapter["etapa"],
                 x=dfp_chapter["candidatos"],
                 marker={"color": ARTEFACT_BLUE},
-                connector={"line": {"color": LINE, "width": 1}},
+                connector={"line": {"color": PAL["line"], "width": 1}},
                 textinfo="value+percent initial",
                 hovertemplate=(
                     "<b>%{label}</b><br>"
@@ -490,7 +601,7 @@ with tab_pipe:
                 ),
             )
         )
-        fig_funnel.update_layout(height=380, **chart_layout)
+        fig_funnel.update_layout(height=380, **CHART_LAYOUT)
         st.plotly_chart(fig_funnel, use_container_width=True)
 
     with col_b:
@@ -508,7 +619,7 @@ with tab_pipe:
                 hovertemplate="<b>%{y}</b><br>Conversão: <b>%{x:.0f}%</b> vieram da etapa anterior<extra></extra>",
             )
         )
-        fig_conv.update_layout(height=380, xaxis_title="% que avança da etapa anterior", **chart_layout)
+        fig_conv.update_layout(height=380, xaxis_title="% que avança da etapa anterior", **CHART_LAYOUT)
         st.plotly_chart(fig_conv, use_container_width=True)
 
     st.markdown("##### Candidatos por etapa × chapter (heatmap)")
@@ -518,14 +629,14 @@ with tab_pipe:
     fig_heat = px.imshow(
         pivot,
         text_auto=True,
-        color_continuous_scale=BRAND_SCALE,
+        color_continuous_scale=brand_heat_scale(),
         aspect="auto",
         labels=dict(color="Candidatos"),
     )
     fig_heat.update_traces(
         hovertemplate="<b>%{y}</b> · %{x}<br>Candidatos parados: <b>%{z}</b><extra></extra>"
     )
-    fig_heat.update_layout(height=320, **chart_layout)
+    fig_heat.update_layout(height=320, **CHART_LAYOUT)
     st.plotly_chart(fig_heat, use_container_width=True)
 
     st.markdown("##### Gargalos e SLA")
@@ -539,21 +650,13 @@ with tab_pipe:
     STATUS_SLA_LABEL = {"critico": "🔴 CRÍTICO", "atencao": "🟡 ATENÇÃO", "ok": "🟢 OK"}
     sla_df["Status"] = sla_df["Status"].map(STATUS_SLA_LABEL).fillna(sla_df["Status"])
 
-    st.dataframe(
+    render_table(
         sla_df,
-        hide_index=True,
-        use_container_width=True,
-        column_config={
-            "Tempo médio (dias)": st.column_config.NumberColumn(
-                help="Tempo médio corrido que um candidato permanece nesta etapa, neste mês."
-            ),
-            "Meta (dias)": st.column_config.NumberColumn(help="SLA alvo definido para esta etapa."),
-            "Excesso (dias)": st.column_config.NumberColumn(
-                help="Tempo médio − meta. Negativo significa que a etapa está dentro do prazo."
-            ),
-            "Status": st.column_config.TextColumn(
-                help="🔴 Crítico: excesso > 5 dias · 🟡 Atenção: até 5 dias de excesso · 🟢 OK: dentro da meta."
-            ),
+        help_map={
+            "Tempo médio (dias)": "Tempo médio corrido que um candidato permanece nesta etapa, neste mês.",
+            "Meta (dias)": "SLA alvo definido para esta etapa.",
+            "Excesso (dias)": "Tempo médio − meta. Negativo significa que a etapa está dentro do prazo.",
+            "Status": "🔴 Crítico: excesso > 5 dias · 🟡 Atenção: até 5 dias de excesso · 🟢 OK: dentro da meta.",
         },
     )
 
@@ -597,31 +700,28 @@ with tab_pipe:
                 fig_recusa.update_layout(
                     height=max(180, 40 * len(por_motivo)),
                     xaxis_title="Nº de recusas",
-                    **chart_layout,
+                    **CHART_LAYOUT,
                 )
                 st.plotly_chart(fig_recusa, use_container_width=True)
             with col_r2:
-                st.dataframe(
-                    recusas_mes.rename(
-                        columns={
-                            "data_recusa": "Data",
-                            "chapter": "Chapter",
-                            "senioridade": "Senioridade",
-                            "motivo_recusa": "Motivo",
-                            "dias_para_recusa": "Dias até recusar",
-                        }
-                    ),
-                    hide_index=True,
-                    use_container_width=True,
-                    column_config={
-                        "Dias até recusar": st.column_config.NumberColumn(
-                            help="Dias entre a oferta ser enviada e o candidato recusar — recusa rápida geralmente é oferta concorrente; recusa lenta geralmente é negociação/contraproposta."
-                        ),
+                recusas_tbl = recusas_mes.rename(
+                    columns={
+                        "data_recusa": "Data",
+                        "chapter": "Chapter",
+                        "senioridade": "Senioridade",
+                        "motivo_recusa": "Motivo",
+                        "dias_para_recusa": "Dias até recusar",
+                    }
+                )
+                render_table(
+                    recusas_tbl,
+                    help_map={
+                        "Dias até recusar": "Dias entre a oferta ser enviada e o candidato recusar — recusa rápida geralmente é oferta concorrente; recusa lenta geralmente é negociação/contraproposta.",
                     },
                 )
 
 st.markdown(
-    """
+    f"""
     <div class="brand-footer">
         Farol de Hiring · Artefact People &amp; Talent — protótipo de discovery, dados mock
     </div>
