@@ -42,9 +42,10 @@ STATUS_BG = {"acelerar": GREEN_BG, "manter": AMBER_BG, "pausar": RED_BG, "sem_da
 STATUS_ICON = {"acelerar": "🟢", "manter": "🟡", "pausar": "🔴", "sem_dado": "⚪"}
 STATUS_LABEL = {"acelerar": "ACELERAR", "manter": "MANTER", "pausar": "PAUSAR", "sem_dado": "SEM DADO"}
 
+# nomes reais do pipe, conforme o deck "Projeto Farol de Contratacao" (jun/2026)
 STAGES_ORDER = [
-    "Curriculo", "Fit Cultural", "Case Tecnico", "Entrevista Tecnica",
-    "Entrevista Final", "Oferta", "Contratado",
+    "Envio de Currículo", "Entrevista Fit", "Técnica 1", "Técnica 2",
+    "Conversa com André", "Oferta", "Contratação",
 ]
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -218,11 +219,15 @@ st.info(
 def load_data():
     farol = pd.read_csv(DATA_DIR / "farol_executivo.csv")
     pipe = pd.read_csv(DATA_DIR / "funil_pipe.csv")
-    return farol, pipe
+    recusas_path = DATA_DIR / "propostas_recusadas.csv"
+    recusas = pd.read_csv(recusas_path) if recusas_path.exists() else pd.DataFrame(
+        columns=["data_recusa", "chapter", "senioridade", "motivo_recusa", "dias_para_recusa"]
+    )
+    return farol, pipe, recusas
 
 
 try:
-    farol_df, pipe_df = load_data()
+    farol_df, pipe_df, recusas_df = load_data()
 except FileNotFoundError as e:
     st.error(
         "Não encontrei farol_executivo.csv e/ou funil_pipe.csv na mesma pasta do app.py. "
@@ -558,6 +563,62 @@ with tab_pipe:
             f"🔴 Gargalo crítico: **{top_gargalo['Etapa']}** em {top_gargalo['Chapter']} — "
             f"{top_gargalo['Tempo médio (dias)']} dias vs. meta de {top_gargalo['Meta (dias)']} dias."
         )
+
+    st.divider()
+    st.markdown("##### Propostas recusadas")
+    st.caption(
+        "Rastreabilidade de ofertas recusadas por motivo — não só a taxa de aceite agregada, "
+        "mas onde e por que o pipe está perdendo gente na reta final."
+    )
+    if recusas_df.empty:
+        st.info("Nenhuma proposta recusada registrada na fonte de dados ainda.")
+    else:
+        recusas_mes = recusas_df[recusas_df["data_recusa"].str.slice(0, 7) == mes_sel2]
+        if recusas_mes.empty:
+            st.caption(f"Nenhuma proposta recusada registrada em {MES_LABELS[mes_sel2]}.")
+        else:
+            col_r1, col_r2 = st.columns([1, 1])
+            with col_r1:
+                por_motivo = (
+                    recusas_mes.groupby("motivo_recusa", as_index=False)
+                    .size()
+                    .rename(columns={"size": "qtd"})
+                    .sort_values("qtd", ascending=True)
+                )
+                fig_recusa = go.Figure(
+                    go.Bar(
+                        y=por_motivo["motivo_recusa"],
+                        x=por_motivo["qtd"],
+                        orientation="h",
+                        marker_color=PINK,
+                        hovertemplate="<b>%{y}</b><br>%{x} recusa(s) neste mês<extra></extra>",
+                    )
+                )
+                fig_recusa.update_layout(
+                    height=max(180, 40 * len(por_motivo)),
+                    xaxis_title="Nº de recusas",
+                    **chart_layout,
+                )
+                st.plotly_chart(fig_recusa, use_container_width=True)
+            with col_r2:
+                st.dataframe(
+                    recusas_mes.rename(
+                        columns={
+                            "data_recusa": "Data",
+                            "chapter": "Chapter",
+                            "senioridade": "Senioridade",
+                            "motivo_recusa": "Motivo",
+                            "dias_para_recusa": "Dias até recusar",
+                        }
+                    ),
+                    hide_index=True,
+                    use_container_width=True,
+                    column_config={
+                        "Dias até recusar": st.column_config.NumberColumn(
+                            help="Dias entre a oferta ser enviada e o candidato recusar — recusa rápida geralmente é oferta concorrente; recusa lenta geralmente é negociação/contraproposta."
+                        ),
+                    },
+                )
 
 st.markdown(
     """
