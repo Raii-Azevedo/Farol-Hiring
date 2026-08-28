@@ -1,0 +1,9 @@
+email,name,active,role,created_at,updated_at
+raissa.azevedo@artefact.com,Raissa Azevedo,true,admin,2026-08-28,2026-08-28
+recruiter@artefact.com,Recruiter Exemplo,true,recruiter,2026-08-28,2026-08-28
+manager@artefact.com,Manager Exemplo,true,manager,2026-08-28,2026-08-28
+former.user@artefact.com,Ex-colaborador,false,recruiter,2026-06-01,2026-08-01
+carolina.rodrigues@artefact.com,Carolina Rodrigues,true,,2026-08-28,2026-08-28
+amanda.figueiredo@artefact.com,Amanda Figueiredo,true,,2026-08-28,2026-08-28
+mateus.travagin@artefact.com,Mateus Travagin,true,,2026-08-28,2026-08-28
+gabriela.goncalves@artefact.com,Gabriela Goncalves,true,,2026-08-28,2026-08-28

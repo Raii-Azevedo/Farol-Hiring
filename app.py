@@ -19,6 +19,8 @@ import plotly.express as px
 import streamlit as st
 from PIL import Image
 
+import auth
+
 # ---------------------------------------------------------------------------
 # Paleta de marca — extraída do "NEW Branding Guide Artefact - Nov 2024.pptx".
 # Essas cores NÃO mudam entre claro/escuro (gradiente do header, azuis e rosa
@@ -312,6 +314,16 @@ st.markdown(
 )
 
 # ---------------------------------------------------------------------------
+# Autenticação (Google OAuth) + Autorização (allowlist) — gate principal.
+# Autenticação != autorização: o Google resolve "quem é você", a allowlist em
+# authorized_users.csv resolve "você pode acessar este dashboard". Enforcement
+# no servidor via st.stop() dentro de auth.py — nada do dashboard abaixo desta
+# linha é montado/enviado ao navegador se o usuário não passar nos dois.
+# ---------------------------------------------------------------------------
+_logo_html_sm = f'<img src="data:image/png;base64,{LOGO_B64}" style="height:34px;">' if LOGO_B64 else ""
+CURRENT_USER = auth.require_login_and_authorization(PAL, GRADIENT_CSS, _logo_html_sm)
+
+# ---------------------------------------------------------------------------
 # Header de marca
 # ---------------------------------------------------------------------------
 _logo_html = f'<img src="data:image/png;base64,{LOGO_B64}">' if LOGO_B64 else ""
@@ -342,6 +354,17 @@ with col_toggle:
     if st.button(toggle_icon, key="theme_toggle", help="Alternar tema claro/escuro"):
         st.session_state["theme"] = "dark" if THEME == "light" else "light"
         st.rerun()
+
+_user_line = f"Conectado como **{CURRENT_USER['name']}** ({CURRENT_USER['email']})"
+if CURRENT_USER.get("role"):
+    _user_line += f" · perfil: {CURRENT_USER['role']}"
+col_user, col_logout = st.columns([10, 1.4])
+with col_user:
+    st.caption(_user_line)
+with col_logout:
+    if auth._auth_configured() and st.button("Sair", key="logout_btn", use_container_width=True):
+        st.logout()
+
 
 def render_note(html_text: str, variant: str = "info") -> None:
     """Callout discreto (substitui st.info/st.warning/st.error) — cor de accent

@@ -9,14 +9,15 @@ Talent Acquisition genérico — é uma leitura calculada de "acelerar, manter o
 pausar" a contratação, complementar ao Greenhouse.
 
 > ⚠️ Este repositório roda hoje sobre **dados mock**. Não está conectado ao
-> pipeline real (BigQuery / Greenhouse / Artefactory) nem tem controle de
-> acesso implementado — ver [Pendências](#pendências-antes-de-ir-para-produção)
-> antes de usar com dado real.
+> pipeline real (BigQuery / Greenhouse / Artefactory) — ver [Pendências](#pendências-antes-de-ir-para-produção)
+> antes de usar com dado real. O controle de acesso (login Google + allowlist)
+> já está implementado — ver [Autenticação e controle de acesso](#autenticação-e-controle-de-acesso) para configurar.
 
 ## Como rodar
 
 ```bash
 pip install -r requirements.txt
+cp .streamlit/secrets.toml.example .streamlit/secrets.toml   # depois preencha com credenciais reais
 streamlit run app.py
 ```
 
@@ -24,12 +25,20 @@ Abre em `http://localhost:8501`. Os arquivos `.csv`, a pasta `assets/` e a pasta
 `.streamlit/` precisam estar na mesma pasta que o `app.py` — todos os caminhos
 são relativos ao arquivo.
 
+Sem `.streamlit/secrets.toml` preenchido, o app roda em **modo aberto** (sem
+checagem de login) e mostra um aviso visível na tela — útil para desenvolver
+localmente, mas nunca deve ir para produção assim.
+
 ## Estrutura do projeto
 
 ```
 app.py                          → aplicação Streamlit (2 abas: Farol Executivo e Visão do Pipe)
-requirements.txt                → dependências Python (streamlit, pandas, plotly, Pillow)
+auth.py                         → autenticação (Google OAuth) + autorização (allowlist)
+authorized_users.csv            → allowlist mock: quem pode acessar o dashboard
+requirements.txt                → dependências Python (streamlit, Authlib, pandas, plotly, Pillow)
 .streamlit/config.toml          → tema claro forçado (evita texto ilegível em tabelas no modo escuro)
+.streamlit/secrets.toml.example → modelo de configuração do Google OAuth (copiar → secrets.toml)
+.gitignore                      → garante que .streamlit/secrets.toml nunca seja commitado
 assets/                         → logo da Artefact extraída do Branding Guide oficial (Nov/2024)
 
 farol_executivo.csv             → grão: mês × chapter × senioridade — demanda, oferta, gap, farol
@@ -47,6 +56,45 @@ CONTEXTO.txt                    → plano-base original do projeto (fórmula do 
 farol-contratacao.html          → mock visual de referência (base do design do app.py)
 farol-hiring-mock.html          → mock visual alternativo (tema escuro, inspirou o drill-down por card)
 ```
+
+## Autenticação e controle de acesso
+
+O acesso segue: **login com Google → identifica o e-mail → consulta a
+allowlist → autoriza ou nega**. Os dois conceitos são resolvidos em lugares
+diferentes:
+
+- **Autenticação** ("quem é você?") — resolvida pelo Google, via `st.login()`
+  nativo do Streamlit (OIDC/Authlib). O app nunca vê nem guarda senha nenhuma.
+- **Autorização** ("você pode acessar?") — resolvida em `auth.py`, consultando
+  `authorized_users.csv` (colunas: `email`, `name`, `active`, `role`,
+  `created_at`, `updated_at`). Ter conta Google válida **não** dá acesso
+  automático — o e-mail (normalizado: sem espaços, lowercase) precisa estar
+  na lista com `active = true`.
+
+A checagem acontece no servidor: como o Streamlit reexecuta o script inteiro
+a cada sessão, um `st.stop()` dentro de `auth.py` impede que o HTML e os dados
+do dashboard cheguem a ser montados/enviados ao navegador quando a autorização
+falha — não é uma validação só de frontend.
+
+**Para configurar de verdade** (login real do Google):
+
+1. Crie/abra um projeto em [Google Cloud Console](https://console.cloud.google.com/auth/overview).
+2. Configure a tela de consentimento ("Branding") e, enquanto o app estiver em
+   modo *Testing*, adicione os e-mails de teste em "Audience".
+3. Em "Clients", crie um client tipo *Web application* com redirect URI
+   `http://localhost:8501/oauth2callback` (ou o domínio real, em produção).
+4. Copie `.streamlit/secrets.toml.example` para `.streamlit/secrets.toml` e
+   preencha `client_id`, `client_secret` e um `cookie_secret` aleatório forte.
+5. Adicione/edite linhas em `authorized_users.csv` para liberar ou revogar
+   acesso (revogar = `active = false`, sem precisar apagar a linha).
+
+Sem `secrets.toml` configurado, o app roda em **modo aberto** com um aviso
+visível — pensado para desenvolvimento local, nunca para produção.
+
+Quando o pipeline real existir, `authorized_users.csv` deve virar uma tabela
+BigQuery (`authorized_users`, mesmo schema) mantida pelo Data Eng, e
+`auth._load_authorized_users()` passa a consultar essa tabela em vez do CSV —
+o resto da lógica de autorização não muda.
 
 Para regenerar os CSVs mock (por exemplo depois de ajustar algum número em
 `build_mocks.py`):
@@ -107,10 +155,12 @@ presente, não histórico), e os dados de demanda do lado Artefactory.
 
 ## Pendências antes de ir para produção
 
-- **Controle de acesso** — login via Google SSO (reaproveitando a identidade
-  corporativa) + tabela de e-mails pré-aprovados no BigQuery, controlada pelo
-  Data Eng. Isso é bloqueador, não item de roadmap: o app não deve rodar com
-  dado real de candidatos sem essa camada.
+- **Credenciais reais do Google OAuth** — o código de login/autorização já
+  está implementado (ver seção acima); falta só criar o client OAuth real no
+  Google Cloud Console da Artefact e preencher `.streamlit/secrets.toml`.
+- **Allowlist em BigQuery** — hoje `authorized_users.csv` é mock local;
+  precisa virar tabela mantida pelo Data Eng antes de ir para produção com
+  dado real de candidatos.
 - **Mapeamento job → chapter/senioridade** — nenhuma view do Greenhouse tem
   essa informação hoje.
 - **Histórico mensal** — as views do Greenhouse são um retrato do presente;
