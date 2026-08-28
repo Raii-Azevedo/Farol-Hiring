@@ -49,6 +49,11 @@ STATUS_BG_BY_THEME = {
     },
 }
 
+# cores de fundo/texto das "notes" (callouts) por variante, só usadas no tema
+# claro — no escuro cai tudo pra superfície do card, só o accent muda
+NOTE_BG_LIGHT = {"info": "#FDF2F6", "neutral": "#F0F3F7", "warn": "#FFF8E8", "critical": "#FDECEC"}
+NOTE_TEXT_LIGHT = {"info": "#6B2338", "neutral": "#1F2733", "warn": "#6B5111", "critical": "#6B1620"}
+
 # paletas de "canvas" (fundo/superficie/texto/borda) por tema
 PALETTES = {
     "light": {
@@ -264,8 +269,36 @@ st.markdown(
         }}
         table.app-table tr:last-child td {{ border-bottom: none; }}
         table.app-table .th-help {{ color: {PAL['muted']}; cursor: help; font-size: 10.5px; }}
+        table.app-table th.num, table.app-table td.num {{
+            text-align: right; font-family: 'Roboto Mono', monospace; font-variant-numeric: tabular-nums;
+        }}
+        table.app-table th.center, table.app-table td.center {{ text-align: center; }}
+        .spark {{ display: block; margin: 0 auto; }}
+        .spark-empty {{ color: {PAL['muted']}; font-size: 11px; }}
 
-        /* ---- caixas de alerta nativas (info/warning/error) ---- */
+        /* ---- banner de insight: frase-achado calculada a partir dos dados,
+               não texto estático ---- */
+        .finding {{
+            background: {GRADIENT_CSS}; border-radius: 12px; padding: 14px 18px; margin: 2px 0 18px;
+            display: flex; gap: 14px; align-items: flex-start; box-shadow: 0 6px 18px rgba(0,34,68,.18);
+        }}
+        .finding .finding-eyebrow {{
+            flex: 0 0 auto; background: rgba(255,255,255,.16); color: #fff; border-radius: 5px;
+            font-size: 9.5px; font-weight: 700; letter-spacing: .06em; padding: 4px 8px;
+            margin-top: 1px; text-transform: uppercase; white-space: nowrap;
+        }}
+        .finding p {{ color: #fff; font-size: 13px; line-height: 1.6; margin: 0; }}
+        .finding p b {{ color: #FFB3D3; }}
+
+        /* ---- notes: callouts discretos, cor por severidade (substitui os
+               st.info/st.warning/st.error nativos, com visual mais sóbrio) ---- */
+        .app-note {{
+            border-radius: 8px; border-left: 3px solid transparent; padding: 10px 14px;
+            font-size: 12.5px; line-height: 1.6; margin: 10px 0;
+        }}
+        .app-note b {{ font-weight: 700; }}
+
+        /* ---- caixas de alerta nativas (fallback, quando ainda usadas) ---- */
         div[data-testid="stAlertContainer"] {{ background: {PAL['surface']}; border: 1px solid {PAL['line']}; }}
 
         /* ---- footer custom ---- */
@@ -310,10 +343,24 @@ with col_toggle:
         st.session_state["theme"] = "dark" if THEME == "light" else "light"
         st.rerun()
 
-st.info(
+def render_note(html_text: str, variant: str = "info") -> None:
+    """Callout discreto (substitui st.info/st.warning/st.error) — cor de accent
+    por severidade, respeitando o tema ativo."""
+    accent = {"info": PINK, "neutral": ARTEFACT_BLUE, "warn": AMBER, "critical": RED}[variant]
+    if THEME == "light":
+        bg, text_color = NOTE_BG_LIGHT[variant], NOTE_TEXT_LIGHT[variant]
+    else:
+        bg, text_color = PAL["surface2"], PAL["ink"]
+    st.markdown(
+        f'<div class="app-note" style="border-left-color:{accent};background:{bg};color:{text_color}">{html_text}</div>',
+        unsafe_allow_html=True,
+    )
+
+
+render_note(
     "Dados mock para prototipagem — ainda não conectado ao pipeline real (BigQuery). "
     "Estrutura das colunas já reflete o modelo de dados planejado.",
-    icon="ℹ️",
+    variant="neutral",
 )
 
 # ---------------------------------------------------------------------------
@@ -341,6 +388,16 @@ except FileNotFoundError as e:
 
 MES_LABELS = farol_df.drop_duplicates("mes").set_index("mes")["mes_label"].to_dict()
 MESES = sorted(MES_LABELS.keys())
+
+
+def gap_trend(chapter: str, senioridade: str) -> list:
+    hist = farol_df[(farol_df["chapter"] == chapter) & (farol_df["senioridade"] == senioridade)].sort_values("mes")
+    return hist["gap_pct"].tolist()
+
+
+def pipe_trend(chapter: str, etapa: str, col: str = "tempo_medio_dias") -> list:
+    hist = pipe_df[(pipe_df["chapter"] == chapter) & (pipe_df["etapa"] == etapa)].sort_values("mes")
+    return hist[col].tolist()
 
 
 def farol_status(demanda: float, oferta: float):
@@ -379,21 +436,39 @@ def _html_attr(text: str) -> str:
     return text.replace('"', "&quot;")
 
 
-def render_table(df: pd.DataFrame, help_map: dict | None = None) -> None:
+def render_table(
+    df: pd.DataFrame,
+    help_map: dict | None = None,
+    numeric_cols: set | None = None,
+    center_cols: set | None = None,
+) -> None:
     """Tabela HTML própria (em vez de st.dataframe) para garantir legibilidade
     idêntica nos dois temas — o widget nativo do Streamlit não re-tematiza em
-    tempo real sem reiniciar o servidor."""
+    tempo real sem reiniciar o servidor. numeric_cols usa fonte monoespaçada
+    alinhada à direita (tabular nums); center_cols centraliza (ex: sparkline)."""
     help_map = help_map or {}
+    numeric_cols = numeric_cols or set()
+    center_cols = center_cols or set()
+
+    def _cls(col: str) -> str:
+        if col in numeric_cols:
+            return ' class="num"'
+        if col in center_cols:
+            return ' class="center"'
+        return ""
+
     thead_cells = "".join(
         (
-            f'<th title="{_html_attr(help_map[c])}">{c} <span class="th-help">(?)</span></th>'
+            f'<th{_cls(c)} title="{_html_attr(help_map[c])}">{c} <span class="th-help">(?)</span></th>'
             if c in help_map
-            else f"<th>{c}</th>"
+            else f"<th{_cls(c)}>{c}</th>"
         )
         for c in df.columns
     )
     body_rows = "".join(
-        "<tr>" + "".join(f"<td>{'' if pd.isna(v) else v}</td>" for v in row) + "</tr>"
+        "<tr>"
+        + "".join(f"<td{_cls(col)}>{'' if pd.isna(v) else v}</td>" for col, v in zip(df.columns, row))
+        + "</tr>"
         for row in df.itertuples(index=False)
     )
     st.markdown(
@@ -405,6 +480,33 @@ def render_table(df: pd.DataFrame, help_map: dict | None = None) -> None:
         </table>
         </div>
         """,
+        unsafe_allow_html=True,
+    )
+
+
+def sparkline_svg(values: list, color: str, w: int = 60, h: int = 20) -> str:
+    """Mini gráfico de tendência inline para células de tabela."""
+    vals = [v for v in values if pd.notna(v)]
+    if len(vals) < 2:
+        return '<span class="spark-empty">—</span>'
+    mn, mx = min(vals), max(vals)
+    rng = (mx - mn) or 1
+    n = len(vals)
+    pts = " ".join(
+        f"{i * w / (n - 1):.1f},{h - 2 - (v - mn) / rng * (h - 4):.1f}" for i, v in enumerate(vals)
+    )
+    return (
+        f'<svg viewBox="0 0 {w} {h}" width="{w}" height="{h}" class="spark">'
+        f'<polyline points="{pts}" fill="none" stroke="{color}" stroke-width="1.6" '
+        f'stroke-linejoin="round" stroke-linecap="round"/></svg>'
+    )
+
+
+def render_finding(html_text: str) -> None:
+    """Banner de 'frase-achado' — insight já calculado, em destaque no topo
+    da página, no lugar de deixar o usuário garimpar a tabela."""
+    st.markdown(
+        f'<div class="finding"><span class="finding-eyebrow">Achado</span><p>{html_text}</p></div>',
         unsafe_allow_html=True,
     )
 
@@ -450,6 +552,26 @@ with tab_farol:
     stat = agg.apply(lambda r: farol_status(r["demanda"], r["oferta"]), axis=1, result_type="expand")
     agg["status"], agg["gap_pct"] = stat[0], stat[1]
 
+    n_acelerar = int((agg["status"] == "acelerar").sum())
+    n_pausar = int((agg["status"] == "pausar").sum())
+    mes_label_sel = MES_LABELS[mes_sel]
+    if n_acelerar == 0 and n_pausar == 0:
+        finding_txt = f"Em <b>{mes_label_sel}</b>, todos os {len(agg)} chapters estão em 🟡 manter — ritmo de contratação equilibrado com a demanda."
+    else:
+        partes = []
+        if n_acelerar:
+            top_acel = agg[agg["status"] == "acelerar"].sort_values("gap_pct", ascending=False).iloc[0]
+            partes.append(
+                f"<b>{n_acelerar} chapter(s) em 🟢 acelerar</b> — destaque para <b>{top_acel['chapter']}</b> (gap {top_acel['gap_pct']:+.0f}%)"
+            )
+        if n_pausar:
+            top_pausa = agg[agg["status"] == "pausar"].sort_values("gap_pct").iloc[0]
+            partes.append(
+                f"<b>{n_pausar} chapter(s) em 🔴 pausar</b> — o mais crítico é <b>{top_pausa['chapter']}</b> (gap {top_pausa['gap_pct']:+.0f}%)"
+            )
+        finding_txt = f"Em <b>{mes_label_sel}</b>: " + " · ".join(partes) + "."
+    render_finding(finding_txt)
+
     st.markdown("### Farol por chapter")
     st.caption(
         "🟢 Acelerar = abrir vagas · 🟡 Manter = ritmo saudável · 🔴 Pausar = oferta acima da demanda. "
@@ -488,8 +610,8 @@ with tab_farol:
     chapter_sel = st.session_state["chapter_sel"]
     st.markdown(f"### Demanda vs. oferta por senioridade — {chapter_sel}")
     st.caption(
-        "A barra colorida é a oferta ajustada; o traço rosa marca a demanda líquida de referência. "
-        "Passe o mouse sobre a barra para o detalhe completo do cálculo."
+        "Cada linha liga a oferta ajustada (círculo) à demanda líquida de referência (losango rosa) — "
+        "a distância entre os dois é o gap. A cor da linha segue o farol daquela senioridade."
     )
 
     detail = df_mes[df_mes["chapter"] == chapter_sel].copy()
@@ -497,19 +619,35 @@ with tab_farol:
     detail_semdado = detail[detail["farol_status"] == "sem_dado"]
 
     if detail_ok.empty:
-        st.warning("Sem dado suficiente para nenhuma senioridade deste chapter neste mês.")
+        render_note("Sem dado suficiente para nenhuma senioridade deste chapter neste mês.", variant="warn")
     else:
         status_labels = detail_ok["farol_status"].map(STATUS_LABEL)
-        customdata_bar = list(zip(detail_ok["demanda_liquida"], detail_ok["gap_pct"], status_labels))
+        max_val = float(max(detail_ok["oferta_ajustada"].max(), detail_ok["demanda_liquida"].max()))
+
         fig = go.Figure()
+        for _, r in detail_ok.iterrows():
+            fig.add_trace(
+                go.Scatter(
+                    x=[r["oferta_ajustada"], r["demanda_liquida"]],
+                    y=[r["senioridade"], r["senioridade"]],
+                    mode="lines",
+                    line=dict(color=STATUS_COLOR[r["farol_status"]], width=3),
+                    hoverinfo="skip",
+                    showlegend=False,
+                )
+            )
         fig.add_trace(
-            go.Bar(
+            go.Scatter(
                 y=detail_ok["senioridade"],
                 x=detail_ok["oferta_ajustada"],
-                orientation="h",
-                marker_color=[STATUS_COLOR[s] for s in detail_ok["farol_status"]],
+                mode="markers",
+                marker=dict(
+                    size=15,
+                    color=[STATUS_COLOR[s] for s in detail_ok["farol_status"]],
+                    line=dict(width=2, color=PAL["surface"]),
+                ),
                 name="Oferta ajustada",
-                customdata=customdata_bar,
+                customdata=list(zip(detail_ok["demanda_liquida"], detail_ok["gap_pct"], status_labels)),
                 hovertemplate=(
                     "<b>%{y}</b><br>"
                     "Oferta ajustada: <b>%{x:.1f}</b> pessoas<br>"
@@ -525,12 +663,28 @@ with tab_farol:
                 y=detail_ok["senioridade"],
                 x=detail_ok["demanda_liquida"],
                 mode="markers",
-                marker=dict(symbol="line-ns", size=26, line=dict(width=3, color=PINK)),
+                marker=dict(size=13, symbol="diamond", color=PINK, line=dict(width=2, color=PAL["surface"])),
                 name="Demanda líquida (referência)",
                 hovertemplate="<b>%{y}</b><br>Demanda líquida de referência: <b>%{x:.0f}</b> pessoas<extra></extra>",
             )
         )
-        fig.update_layout(height=260, xaxis_title="Pessoas", legend=dict(orientation="h", yanchor="bottom", y=1.02), **CHART_LAYOUT)
+        for _, r in detail_ok.iterrows():
+            fig.add_annotation(
+                x=max(r["oferta_ajustada"], r["demanda_liquida"]),
+                y=r["senioridade"],
+                text=f"{r['gap_pct']:+.0f}%",
+                showarrow=False,
+                xanchor="left",
+                xshift=12,
+                font=dict(size=11.5, color=STATUS_COLOR[r["farol_status"]], family="Roboto Mono, monospace"),
+            )
+        fig.update_xaxes(range=[0, max_val * 1.32 if max_val > 0 else 1])
+        fig.update_layout(
+            height=max(220, 70 * len(detail_ok)),
+            xaxis_title="Pessoas",
+            legend=dict(orientation="h", yanchor="bottom", y=1.02),
+            **CHART_LAYOUT,
+        )
         st.plotly_chart(fig, use_container_width=True)
 
     if not detail_semdado.empty:
@@ -543,19 +697,27 @@ with tab_farol:
         tbl = detail[
             ["senioridade", "demanda_liquida", "oferta_ajustada", "gap", "gap_pct", "farol_status"]
         ].copy()
+        tendencias = [
+            sparkline_svg(gap_trend(chapter_sel, s), STATUS_COLOR[st_])
+            for s, st_ in zip(detail["senioridade"], detail["farol_status"])
+        ]
         tbl["demanda_liquida"] = tbl["demanda_liquida"].map(lambda v: f"{v:.0f}")
         tbl["oferta_ajustada"] = tbl["oferta_ajustada"].map(lambda v: f"{v:.1f}")
         tbl["gap"] = tbl["gap"].map(lambda v: f"{v:+.1f}")
         tbl["gap_pct"] = tbl["gap_pct"].map(lambda v: f"{v:+.1f}%" if pd.notna(v) else "—")
         tbl["farol_status"] = tbl["farol_status"].map(lambda s: f"{STATUS_ICON[s]} {STATUS_LABEL[s]}")
-        tbl.columns = ["Senioridade", "Demanda líquida", "Oferta ajustada", "Gap", "Gap %", "Status"]
+        tbl["tendencia"] = tendencias
+        tbl.columns = ["Senioridade", "Demanda líquida", "Oferta ajustada", "Gap", "Gap %", "Status", "Tendência (gap)"]
         render_table(
             tbl,
+            numeric_cols={"Demanda líquida", "Oferta ajustada", "Gap", "Gap %"},
+            center_cols={"Tendência (gap)"},
             help_map={
                 "Demanda líquida": "Pessoas necessárias no período (Artefactory): ongoing + forecast ponderado − alocações previstas.",
                 "Oferta ajustada": "Candidatos do pipe (ponderados pela conversão esperada) + SU ponderado pela taxa de reativação.",
                 "Gap %": "(Demanda − Oferta) / Demanda. Acima de 20% = acelerar; entre -10% e 20% = manter; abaixo de -10% = pausar.",
                 "Status": "Farol calculado a partir do Gap %.",
+                "Tendência (gap)": "Evolução do Gap % ao longo dos meses disponíveis, para esta senioridade.",
             },
         )
 
@@ -580,6 +742,22 @@ with tab_pipe:
 
     dfp_mes = pipe_df[pipe_df["mes"] == mes_sel2]
     dfp_chapter = dfp_mes[dfp_mes["chapter"] == chapter_sel2].sort_values("ordem_etapa")
+
+    sla_calc = dfp_mes.dropna(subset=["excesso_dias"])
+    n_crit_pipe = int((sla_calc["status_sla"] == "critico").sum())
+    recusas_calc = recusas_df[recusas_df["data_recusa"].str.slice(0, 7) == mes_sel2] if not recusas_df.empty else recusas_df
+    partes_pipe = []
+    if n_crit_pipe:
+        top_gargalo_calc = sla_calc.sort_values("excesso_dias", ascending=False).iloc[0]
+        partes_pipe.append(
+            f"<b>{n_crit_pipe} etapa(s) em SLA crítico</b> — a pior é <b>{top_gargalo_calc['etapa']}</b> em {top_gargalo_calc['chapter']} "
+            f"({top_gargalo_calc['tempo_medio_dias']:.0f}d vs. meta de {top_gargalo_calc['meta_sla_dias']:.0f}d)"
+        )
+    else:
+        partes_pipe.append("Nenhuma etapa em SLA crítico neste mês")
+    if not recusas_calc.empty:
+        partes_pipe.append(f"<b>{len(recusas_calc)} proposta(s) recusada(s)</b> registrada(s)")
+    render_finding(f"Em <b>{MES_LABELS[mes_sel2]}</b>: " + " · ".join(partes_pipe) + ".")
 
     col_a, col_b = st.columns(2)
     with col_a:
@@ -648,23 +826,34 @@ with tab_pipe:
     sla_df.columns = ["Chapter", "Etapa", "Tempo médio (dias)", "Meta (dias)", "Excesso (dias)", "Status"]
 
     STATUS_SLA_LABEL = {"critico": "🔴 CRÍTICO", "atencao": "🟡 ATENÇÃO", "ok": "🟢 OK"}
+    sla_df["Tendência"] = [
+        sparkline_svg(pipe_trend(ch, et), RED if exc > 0 else GREEN)
+        for ch, et, exc in zip(sla_df["Chapter"], sla_df["Etapa"], sla_df["Excesso (dias)"])
+    ]
+    sla_df["Tempo médio (dias)"] = sla_df["Tempo médio (dias)"].map(lambda v: f"{v:.1f}")
+    sla_df["Meta (dias)"] = sla_df["Meta (dias)"].map(lambda v: f"{v:.0f}")
+    sla_df["Excesso (dias)"] = sla_df["Excesso (dias)"].map(lambda v: f"{v:+.1f}")
     sla_df["Status"] = sla_df["Status"].map(STATUS_SLA_LABEL).fillna(sla_df["Status"])
 
     render_table(
         sla_df,
+        numeric_cols={"Tempo médio (dias)", "Meta (dias)", "Excesso (dias)"},
+        center_cols={"Tendência"},
         help_map={
             "Tempo médio (dias)": "Tempo médio corrido que um candidato permanece nesta etapa, neste mês.",
             "Meta (dias)": "SLA alvo definido para esta etapa.",
             "Excesso (dias)": "Tempo médio − meta. Negativo significa que a etapa está dentro do prazo.",
             "Status": "🔴 Crítico: excesso > 5 dias · 🟡 Atenção: até 5 dias de excesso · 🟢 OK: dentro da meta.",
+            "Tendência": "Evolução do tempo médio nesta etapa ao longo dos meses disponíveis.",
         },
     )
 
     top_gargalo = sla_df.iloc[0]
     if top_gargalo["Status"] == STATUS_SLA_LABEL["critico"]:
-        st.error(
-            f"🔴 Gargalo crítico: **{top_gargalo['Etapa']}** em {top_gargalo['Chapter']} — "
-            f"{top_gargalo['Tempo médio (dias)']} dias vs. meta de {top_gargalo['Meta (dias)']} dias."
+        render_note(
+            f"🔴 <b>Gargalo crítico:</b> {top_gargalo['Etapa']} em {top_gargalo['Chapter']} — "
+            f"{top_gargalo['Tempo médio (dias)']} dias vs. meta de {top_gargalo['Meta (dias)']} dias.",
+            variant="critical",
         )
 
     st.divider()
@@ -674,7 +863,7 @@ with tab_pipe:
         "mas onde e por que o pipe está perdendo gente na reta final."
     )
     if recusas_df.empty:
-        st.info("Nenhuma proposta recusada registrada na fonte de dados ainda.")
+        render_note("Nenhuma proposta recusada registrada na fonte de dados ainda.", variant="neutral")
     else:
         recusas_mes = recusas_df[recusas_df["data_recusa"].str.slice(0, 7) == mes_sel2]
         if recusas_mes.empty:
@@ -715,6 +904,7 @@ with tab_pipe:
                 )
                 render_table(
                     recusas_tbl,
+                    numeric_cols={"Dias até recusar"},
                     help_map={
                         "Dias até recusar": "Dias entre a oferta ser enviada e o candidato recusar — recusa rápida geralmente é oferta concorrente; recusa lenta geralmente é negociação/contraproposta.",
                     },
