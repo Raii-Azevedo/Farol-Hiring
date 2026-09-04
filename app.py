@@ -240,6 +240,17 @@ st.markdown(
         .farol-card .kpis {{ font-size: 12px; color: {PAL['muted']}; margin-top: 10px; line-height: 1.7; font-family: 'Roboto Mono', monospace; }}
         .farol-card .kpis b {{ color: {PAL['ink']}; }}
 
+        /* ---- kpis executivos: cards de metrica agregada (aba Visao Gerencial) ---- */
+        .exec-kpi-row {{ display: flex; gap: 14px; flex-wrap: wrap; margin: 4px 0 22px; }}
+        .exec-kpi-card {{
+            flex: 1 1 200px; background: {PAL['surface']}; border: 1px solid {PAL['line']}; border-radius: 14px;
+            padding: 16px 18px; box-shadow: 0 2px 10px {PAL['shadow']};
+        }}
+        .exec-kpi-card .exec-kpi-label {{ font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: {PAL['muted']}; font-weight: 700; }}
+        .exec-kpi-card .exec-kpi-value {{ font-family: 'Roboto Mono', monospace; font-size: 25px; font-weight: 700; color: {PAL['ink']}; margin-top: 6px; }}
+        .exec-kpi-card .exec-kpi-delta {{ font-size: 12px; font-weight: 600; margin-top: 5px; }}
+        .exec-kpi-card .exec-kpi-note {{ font-size: 11px; color: {PAL['muted']}; margin-top: 5px; line-height: 1.4; }}
+
         /* ---- botao padrao ---- */
         .stButton > button {{
             border-radius: 8px; border: 1px solid {PAL['line']}; color: {ARTEFACT_BLUE if THEME == 'light' else '#8FA3FF'};
@@ -455,6 +466,48 @@ def farol_insight(status: str, gap_pct, demanda: float, oferta: float) -> str:
     )
 
 
+# etapas do pipe que já passaram da triagem inicial mas ainda não viraram
+# contratação — "pipe qualificado" no sentido usado no mock de referência
+# (a partir da Entrevista Fit, até a decisão final de Oferta).
+QUALIFIED_STAGES = ["Entrevista Fit", "Técnica 1", "Técnica 2", "Conversa com André", "Oferta"]
+
+
+def pipe_qualificado(mes: str, chapter: str | None = None) -> int:
+    """Quantos candidatos já passaram do currículo e ainda estão vivos no processo
+    (Entrevista Fit até Oferta) — o estoque qualificado disponível para cobrir
+    a demanda deste mês, sem contar quem ainda está só na triagem de currículo."""
+    df = pipe_df[(pipe_df["mes"] == mes) & (pipe_df["etapa"].isin(QUALIFIED_STAGES))]
+    if chapter:
+        df = df[df["chapter"] == chapter]
+    return int(df["candidatos"].sum())
+
+
+def taxa_aceite_oferta(mes: str, chapter: str | None = None) -> float | None:
+    """% de ofertas enviadas que viraram contratação (Oferta -> Contratação)."""
+    df = pipe_df[pipe_df["mes"] == mes]
+    if chapter:
+        df = df[df["chapter"] == chapter]
+    ofertas = df[df["etapa"] == "Oferta"]["candidatos"].sum()
+    contratacoes = df[df["etapa"] == "Contratação"]["candidatos"].sum()
+    if not ofertas:
+        return None
+    return contratacoes / ofertas * 100
+
+
+def tempo_medio_contratacao(mes: str) -> float | None:
+    """Soma do tempo médio (dias) de cada etapa do funil, com a média entre
+    chapters em cada etapa — leitura ponta a ponta de currículo até contratação."""
+    df = pipe_df[(pipe_df["mes"] == mes) & (pipe_df["tempo_medio_dias"].notna())]
+    if df.empty:
+        return None
+    return df.groupby("etapa")["tempo_medio_dias"].mean().sum()
+
+
+def mes_anterior(mes: str) -> str | None:
+    idx = MESES.index(mes)
+    return MESES[idx - 1] if idx > 0 else None
+
+
 def _html_attr(text: str) -> str:
     return text.replace('"', "&quot;")
 
@@ -548,7 +601,99 @@ CHART_LAYOUT = dict(
     yaxis=dict(gridcolor=PAL["line"], zerolinecolor=PAL["line"]),
 )
 
-tab_farol, tab_pipe = st.tabs(["Farol Executivo", "Visão do Pipe"])
+tab_exec, tab_farol, tab_pipe = st.tabs(["Visão Gerencial", "Farol Executivo", "Visão do Pipe"])
+
+# ---------------------------------------------------------------------------
+# TAB 0 — VISÃO GERENCIAL
+# ---------------------------------------------------------------------------
+with tab_exec:
+    st.markdown("## 🧭 Visão Gerencial")
+    st.caption(
+        "Resumo executivo do mês: quanto falta contratar, quanto pipe qualificado já existe para "
+        "cobrir essa necessidade, e quão rápido e eficiente está o funil — antes de entrar no "
+        "detalhe por chapter (aba Farol Executivo) ou por etapa (aba Visão do Pipe)."
+    )
+
+    mes_sel0 = st.selectbox(
+        "Mês de referência", MESES, index=len(MESES) - 1, format_func=lambda m: MES_LABELS[m], key="mes_exec"
+    )
+    mes_ant0 = mes_anterior(mes_sel0)
+
+    df_mes0 = farol_df[farol_df["mes"] == mes_sel0]
+    farol_chapters = sorted(farol_df["chapter"].unique())
+    demanda_total = float(df_mes0["demanda_liquida"].sum())
+    pipe_qual_total = sum(pipe_qualificado(mes_sel0, ch) for ch in farol_chapters)
+    tempo_total = tempo_medio_contratacao(mes_sel0)
+    aceite_total = taxa_aceite_oferta(mes_sel0)
+
+    demanda_ant = float(farol_df[farol_df["mes"] == mes_ant0]["demanda_liquida"].sum()) if mes_ant0 else None
+    pipe_qual_ant = sum(pipe_qualificado(mes_ant0, ch) for ch in farol_chapters) if mes_ant0 else None
+    tempo_ant = tempo_medio_contratacao(mes_ant0) if mes_ant0 else None
+    aceite_ant = taxa_aceite_oferta(mes_ant0) if mes_ant0 else None
+
+    def _delta_html(atual, anterior, melhora_se_sobe, fmt, suffix=""):
+        if atual is None or anterior is None or mes_ant0 is None:
+            return ""
+        diff = atual - anterior
+        arrow = "↑" if diff >= 0 else "↓"
+        if melhora_se_sobe is None:
+            color = PAL["muted"]
+        else:
+            se_bom = (diff >= 0) if melhora_se_sobe else (diff <= 0)
+            color = GREEN if se_bom else RED
+        return f'<div class="exec-kpi-delta" style="color:{color}">{arrow} {fmt.format(abs(diff))}{suffix} vs. {MES_LABELS[mes_ant0]}</div>'
+
+    kpi_cards = [
+        (
+            "Necessidade de contratação líquida",
+            f"{demanda_total:.0f}",
+            _delta_html(demanda_total, demanda_ant, None, "{:.0f}", " pessoas"),
+            "Soma da demanda líquida (Artefactory) de todos os chapters neste mês.",
+        ),
+        (
+            "Pipe qualificado atual",
+            f"{pipe_qual_total:.0f}",
+            _delta_html(pipe_qual_total, pipe_qual_ant, True, "{:.0f}", " candidatos"),
+            "Candidatos da Entrevista Fit até a Oferta, somando os chapters com demanda cadastrada — quem já passou da triagem inicial.",
+        ),
+        (
+            "Tempo médio de contratação",
+            f"{tempo_total:.0f} dias" if tempo_total is not None else "—",
+            _delta_html(tempo_total, tempo_ant, False, "{:.0f}", " dias"),
+            "Soma do tempo médio de cada etapa do funil, do envio do currículo até a contratação.",
+        ),
+        (
+            "Taxa de aceite de oferta",
+            f"{aceite_total:.0f}%" if aceite_total is not None else "—",
+            _delta_html(aceite_total, aceite_ant, True, "{:.0f}", "pp"),
+            "% de ofertas enviadas que viraram contratação, somando todos os chapters.",
+        ),
+    ]
+    st.markdown(
+        '<div class="exec-kpi-row">'
+        + "".join(
+            f'<div class="exec-kpi-card"><div class="exec-kpi-label">{label}</div>'
+            f'<div class="exec-kpi-value">{value}</div>{delta}'
+            f'<div class="exec-kpi-note">{note}</div></div>'
+            for label, value, delta, note in kpi_cards
+        )
+        + "</div>",
+        unsafe_allow_html=True,
+    )
+
+    agg0 = (
+        df_mes0.groupby("chapter", as_index=False)
+        .agg(demanda=("demanda_liquida", "sum"), oferta=("oferta_ajustada", "sum"))
+    )
+    stat0 = agg0.apply(lambda r: farol_status(r["demanda"], r["oferta"]), axis=1, result_type="expand")
+    agg0["status"] = stat0[0]
+    n_acel0, n_pausa0 = int((agg0["status"] == "acelerar").sum()), int((agg0["status"] == "pausar").sum())
+    render_finding(
+        f"Em <b>{MES_LABELS[mes_sel0]}</b>: necessidade líquida de <b>{demanda_total:.0f} pessoas</b>, "
+        f"com <b>{pipe_qual_total:.0f} candidatos</b> já qualificados no pipe (a partir da Fit) — "
+        f"<b>{n_acel0} chapter(s)</b> pedindo para acelerar e <b>{n_pausa0}</b> para pausar. "
+        "Veja o detalhe por chapter na aba <b>Farol Executivo</b>."
+    )
 
 # ---------------------------------------------------------------------------
 # TAB 1 — FAROL EXECUTIVO
@@ -598,7 +743,8 @@ with tab_farol:
     st.markdown("### Farol por chapter")
     st.caption(
         "🟢 Acelerar = abrir vagas · 🟡 Manter = ritmo saudável · 🔴 Pausar = oferta acima da demanda. "
-        "Passe o mouse sobre um card para o motivo do status, ou clique em **Ver detalhe** para a quebra por senioridade."
+        "Passe o mouse sobre um card para o motivo do status, ou clique em **Ver detalhe** para a quebra por senioridade. "
+        "\"Pipe qualificado\" soma os candidatos deste chapter da Entrevista Fit até a Oferta, neste mês."
     )
     cols = st.columns(len(agg))
     if "chapter_sel" not in st.session_state:
@@ -618,7 +764,8 @@ with tab_farol:
                     <div class="badge" style="color:{color}; background:{bg}">{STATUS_LABEL[row['status']]}</div>
                     <div class="kpis">
                         Gap: <b>{gap_txt}</b><br>
-                        Demanda: <b>{row['demanda']:.0f}</b> · Oferta: <b>{row['oferta']:.1f}</b>
+                        Demanda: <b>{row['demanda']:.0f}</b> · Oferta: <b>{row['oferta']:.1f}</b><br>
+                        Pipe qualificado: <b>{pipe_qualificado(mes_sel, row['chapter'])}</b>
                     </div>
                 </div>
                 """,
@@ -807,14 +954,18 @@ with tab_pipe:
 
     with col_b:
         st.markdown(f"##### Conversão etapa a etapa — {chapter_sel2}")
-        st.caption("% de candidatos que avançam de uma etapa para a próxima — mostra onde a eficiência do processo é pior.")
+        st.caption(
+            "% de candidatos que avançam de uma etapa para a próxima — mostra onde a eficiência do processo é pior. "
+            "A última barra (Oferta → Contratação) é a taxa de aceite de oferta."
+        )
         conv = dfp_chapter.dropna(subset=["conversao_pct"])
+        bar_colors = [PINK if et == "Contratação" else ARTEFACT_BLUE for et in conv["etapa"]]
         fig_conv = go.Figure(
             go.Bar(
                 y=conv["etapa"],
                 x=conv["conversao_pct"].astype(float),
                 orientation="h",
-                marker_color=ARTEFACT_BLUE,
+                marker_color=bar_colors,
                 text=conv["conversao_pct"].astype(float).map(lambda v: f"{v:.0f}%"),
                 textposition="outside",
                 hovertemplate="<b>%{y}</b><br>Conversão: <b>%{x:.0f}%</b> vieram da etapa anterior<extra></extra>",
@@ -822,6 +973,9 @@ with tab_pipe:
         )
         fig_conv.update_layout(height=380, xaxis_title="% que avança da etapa anterior", **CHART_LAYOUT)
         st.plotly_chart(fig_conv, use_container_width=True)
+        aceite_chapter = taxa_aceite_oferta(mes_sel2, chapter_sel2)
+        if aceite_chapter is not None:
+            st.caption(f"🔑 Taxa de aceite de oferta em **{chapter_sel2}** neste mês: **{aceite_chapter:.0f}%**")
 
     st.markdown("##### Candidatos por etapa × chapter (heatmap)")
     st.caption("Concentração de candidatos parados em cada etapa — células mais escuras indicam mais gente aguardando ali, em qualquer chapter.")

@@ -32,7 +32,7 @@ localmente, mas nunca deve ir para produção assim.
 ## Estrutura do projeto
 
 ```
-app.py                          → aplicação Streamlit (2 abas: Farol Executivo e Visão do Pipe)
+app.py                          → aplicação Streamlit (3 abas: Visão Gerencial, Farol Executivo e Visão do Pipe)
 auth.py                         → autenticação (Google OAuth) + autorização (allowlist)
 authorized_users.csv            → allowlist mock: quem pode acessar o dashboard
 requirements.txt                → dependências Python (streamlit, Authlib, pandas, plotly, Pillow)
@@ -105,10 +105,17 @@ python build_mocks.py
 
 ## O que o app mostra hoje
 
+**Visão Gerencial** — resumo executivo do mês: necessidade de contratação
+líquida, pipe qualificado atual (candidatos da Entrevista Fit até a Oferta),
+tempo médio de contratação e taxa de aceite de oferta, cada um com a variação
+frente ao mês anterior. Pensada como a primeira leitura antes de entrar no
+detalhe por chapter ou por etapa do funil.
+
 **Farol Executivo** — cards com semáforo por chapter (🟢 acelerar / 🟡 manter /
 🔴 pausar / ⚪ sem dado), com tooltip explicando o motivo do status ao passar o
 mouse, drill-down por senioridade com bullet chart (oferta ajustada vs. demanda
-líquida de referência).
+líquida de referência). Cada card também mostra o pipe qualificado daquele
+chapter no mês.
 
 **Visão do Pipe** — funil de volume por etapa, conversão etapa a etapa, heatmap
 de candidatos por etapa × chapter, tabela de gargalos e SLA, e uma seção de
