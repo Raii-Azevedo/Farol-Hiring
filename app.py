@@ -92,6 +92,8 @@ STAGES_ORDER = [
     "Conversa com André", "Oferta", "Contratação",
 ]
 
+SENIORIDADE_ORDER = ["Junior", "Pleno", "Senior", "Staff"]
+
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR
 ASSETS_DIR = BASE_DIR / "assets"
@@ -408,11 +410,24 @@ def load_data():
     recusas = pd.read_csv(recusas_path) if recusas_path.exists() else pd.DataFrame(
         columns=["data_recusa", "chapter", "senioridade", "motivo_recusa", "dias_para_recusa"]
     )
-    return farol, pipe, recusas
+    pipe_nivel_path = DATA_DIR / "funil_pipe_nivel.csv"
+    pipe_nivel = pd.read_csv(pipe_nivel_path) if pipe_nivel_path.exists() else pd.DataFrame(
+        columns=["mes", "mes_label", "chapter", "senioridade", "etapa", "ordem_etapa", "candidatos"]
+    )
+    su_ofertas_path = DATA_DIR / "su_ofertas.csv"
+    su_ofertas = pd.read_csv(su_ofertas_path) if su_ofertas_path.exists() else pd.DataFrame(
+        columns=["mes", "mes_label", "chapter", "ofertas_sys", "aceites_sys"]
+    )
+    su_banco_path = DATA_DIR / "su_banco_talentos.csv"
+    su_banco = pd.read_csv(su_banco_path) if su_banco_path.exists() else pd.DataFrame(
+        columns=["candidato", "chapter", "senioridade", "dias_no_banco", "probabilidade_reativacao_pct",
+                 "urgencia_gap_chapter_pct", "score_priorizacao", "status"]
+    )
+    return farol, pipe, recusas, pipe_nivel, su_ofertas, su_banco
 
 
 try:
-    farol_df, pipe_df, recusas_df = load_data()
+    farol_df, pipe_df, recusas_df, pipe_nivel_df, su_ofertas_df, su_banco_df = load_data()
 except FileNotFoundError as e:
     st.error(
         "Não encontrei farol_executivo.csv e/ou funil_pipe.csv na mesma pasta do app.py. "
@@ -506,6 +521,44 @@ def tempo_medio_contratacao(mes: str) -> float | None:
 def mes_anterior(mes: str) -> str | None:
     idx = MESES.index(mes)
     return MESES[idx - 1] if idx > 0 else None
+
+
+def conversao_total_pipe(mes: str) -> float | None:
+    """% do volume inicial de currículos que termina em contratação, somando
+    todos os chapters — a eficiência ponta a ponta do funil no mês."""
+    df = pipe_df[pipe_df["mes"] == mes]
+    curriculos = df[df["etapa"] == "Envio de Currículo"]["candidatos"].sum()
+    contratacoes = df[df["etapa"] == "Contratação"]["candidatos"].sum()
+    if not curriculos:
+        return None
+    return contratacoes / curriculos * 100
+
+
+def taxa_aceite_sys(mes: str, chapter: str | None = None) -> float | None:
+    """% de ofertas feitas a candidatos do banco See You Soon que viraram
+    contratação, neste mês (fonte: su_ofertas.csv)."""
+    if su_ofertas_df.empty:
+        return None
+    df = su_ofertas_df[su_ofertas_df["mes"] == mes]
+    if chapter:
+        df = df[df["chapter"] == chapter]
+    ofertas = df["ofertas_sys"].sum()
+    aceites = df["aceites_sys"].sum()
+    if not ofertas:
+        return None
+    return aceites / ofertas * 100
+
+
+def su_tempo_medio_banco() -> float | None:
+    """Tempo médio (dias) que os candidatos hoje 'aguardando' no banco See You
+    Soon já estão parados — foto do estoque atual (su_banco_talentos.csv não
+    tem grão mensal, é um snapshot do presente)."""
+    if su_banco_df.empty:
+        return None
+    ativos = su_banco_df[su_banco_df["status"] == "aguardando"]
+    if ativos.empty:
+        return None
+    return float(ativos["dias_no_banco"].mean())
 
 
 def _html_attr(text: str) -> str:
@@ -913,6 +966,61 @@ with tab_pipe:
     dfp_mes = pipe_df[pipe_df["mes"] == mes_sel2]
     dfp_chapter = dfp_mes[dfp_mes["chapter"] == chapter_sel2].sort_values("ordem_etapa")
 
+    mes_ant2 = mes_anterior(mes_sel2)
+    conversao_total = conversao_total_pipe(mes_sel2)
+    aceite_geral_mes = taxa_aceite_oferta(mes_sel2)
+    aceite_sys_mes = taxa_aceite_sys(mes_sel2)
+    su_tempo_banco = su_tempo_medio_banco()
+    conversao_ant = conversao_total_pipe(mes_ant2) if mes_ant2 else None
+    aceite_geral_ant = taxa_aceite_oferta(mes_ant2) if mes_ant2 else None
+    aceite_sys_ant = taxa_aceite_sys(mes_ant2) if mes_ant2 else None
+
+    def _delta_pipe(atual, anterior, mes_ref):
+        if atual is None or anterior is None or mes_ref is None:
+            return ""
+        diff = atual - anterior
+        arrow = "↑" if diff >= 0 else "↓"
+        color = GREEN if diff >= 0 else RED
+        return f'<div class="exec-kpi-delta" style="color:{color}">{arrow} {abs(diff):.0f}pp vs. {MES_LABELS[mes_ref]}</div>'
+
+    pipe_kpi_cards = [
+        (
+            "Conversão total do pipe",
+            f"{conversao_total:.1f}%" if conversao_total is not None else "—",
+            _delta_pipe(conversao_total, conversao_ant, mes_ant2),
+            "Contratações / total de currículos recebidos, somando todos os chapters.",
+        ),
+        (
+            "Taxa de aceite de oferta (Geral)",
+            f"{aceite_geral_mes:.0f}%" if aceite_geral_mes is not None else "—",
+            _delta_pipe(aceite_geral_mes, aceite_geral_ant, mes_ant2),
+            "Ofertas aceitas / ofertas enviadas, somando todos os chapters.",
+        ),
+        (
+            "Taxa de aceite — See You Soon",
+            f"{aceite_sys_mes:.0f}%" if aceite_sys_mes is not None else "—",
+            _delta_pipe(aceite_sys_mes, aceite_sys_ant, mes_ant2),
+            "Ofertas aceitas / ofertas enviadas a candidatos do banco See You Soon.",
+        ),
+        (
+            "See You Soon — tempo médio no banco",
+            f"{su_tempo_banco:.0f} dias" if su_tempo_banco is not None else "—",
+            "",
+            "Média de dias que os candidatos hoje \"aguardando\" já estão no banco (foto atual do estoque).",
+        ),
+    ]
+    st.markdown(
+        '<div class="exec-kpi-row">'
+        + "".join(
+            f'<div class="exec-kpi-card"><div class="exec-kpi-label">{label}</div>'
+            f'<div class="exec-kpi-value">{value}</div>{delta}'
+            f'<div class="exec-kpi-note">{note}</div></div>'
+            for label, value, delta, note in pipe_kpi_cards
+        )
+        + "</div>",
+        unsafe_allow_html=True,
+    )
+
     sla_calc = dfp_mes.dropna(subset=["excesso_dias"])
     n_crit_pipe = int((sla_calc["status_sla"] == "critico").sum())
     recusas_calc = recusas_df[recusas_df["data_recusa"].str.slice(0, 7) == mes_sel2] if not recusas_df.empty else recusas_df
@@ -977,6 +1085,54 @@ with tab_pipe:
         if aceite_chapter is not None:
             st.caption(f"🔑 Taxa de aceite de oferta em **{chapter_sel2}** neste mês: **{aceite_chapter:.0f}%**")
 
+    col_ag, col_as = st.columns(2)
+    with col_ag:
+        st.markdown("##### Taxa de aceite de oferta por carreira (Geral)")
+        st.caption("Percentual de ofertas aceitas por chapter, neste mês.")
+        chapters_aceite = sorted(farol_df["chapter"].unique())
+        aceite_vals = [taxa_aceite_oferta(mes_sel2, ch) for ch in chapters_aceite]
+        fig_aceite_geral = go.Figure(
+            go.Bar(
+                x=chapters_aceite,
+                y=[v if v is not None else 0 for v in aceite_vals],
+                marker_color=ARTEFACT_BLUE,
+                text=[f"{v:.0f}%" if v is not None else "—" for v in aceite_vals],
+                textposition="outside",
+                hovertemplate="<b>%{x}</b><br>Aceite geral: <b>%{y:.0f}%</b><extra></extra>",
+            )
+        )
+        fig_aceite_geral.update_layout(
+            height=300,
+            yaxis=dict(range=[0, 100], **CHART_LAYOUT["yaxis"]),
+            **{k: v for k, v in CHART_LAYOUT.items() if k != "yaxis"},
+        )
+        st.plotly_chart(fig_aceite_geral, use_container_width=True)
+
+    with col_as:
+        st.markdown("##### Taxa de aceite — See You Soon por carreira")
+        st.caption("Percentual de ofertas aceitas vindas do banco See You Soon, por chapter, neste mês.")
+        chapters_sys = sorted(su_ofertas_df["chapter"].unique()) if not su_ofertas_df.empty else []
+        if chapters_sys:
+            aceite_sys_vals = [taxa_aceite_sys(mes_sel2, ch) for ch in chapters_sys]
+            fig_aceite_sys = go.Figure(
+                go.Bar(
+                    x=chapters_sys,
+                    y=[v if v is not None else 0 for v in aceite_sys_vals],
+                    marker_color=PINK,
+                    text=[f"{v:.0f}%" if v is not None else "—" for v in aceite_sys_vals],
+                    textposition="outside",
+                    hovertemplate="<b>%{x}</b><br>Aceite SYS: <b>%{y:.0f}%</b><extra></extra>",
+                )
+            )
+            fig_aceite_sys.update_layout(
+                height=300,
+                yaxis=dict(range=[0, 100], **CHART_LAYOUT["yaxis"]),
+                **{k: v for k, v in CHART_LAYOUT.items() if k != "yaxis"},
+            )
+            st.plotly_chart(fig_aceite_sys, use_container_width=True)
+        else:
+            render_note("Sem dado de ofertas do banco See You Soon.", variant="neutral")
+
     st.markdown("##### Candidatos por etapa × chapter (heatmap)")
     st.caption("Concentração de candidatos parados em cada etapa — células mais escuras indicam mais gente aguardando ali, em qualquer chapter.")
     pivot = dfp_mes.pivot_table(index="chapter", columns="etapa", values="candidatos", aggfunc="sum")
@@ -994,8 +1150,81 @@ with tab_pipe:
     fig_heat.update_layout(height=320, **CHART_LAYOUT)
     st.plotly_chart(fig_heat, use_container_width=True)
 
+    st.markdown("##### Volume de candidatos por etapa e por nível")
+    st.caption(
+        "O heatmap acima cobre os 6 chapters do Greenhouse; aqui o recorte é por senioridade e limitado aos "
+        "4 chapters com demanda cadastrada no Artefactory (Software Engineering e AI Engineering entram "
+        "dentro de Data Engineering na Visão Gerencial e no Farol Executivo). 🔺 marca combinações com "
+        "volume bem acima do normal para aquela etapa neste mês."
+    )
+    col_f1, col_f2 = st.columns(2)
+    with col_f1:
+        carreira_filtro = st.selectbox(
+            "Carreira", ["Todas"] + sorted(pipe_nivel_df["chapter"].unique()), key="filtro_carreira_nivel"
+        )
+    with col_f2:
+        senioridade_filtro = st.selectbox(
+            "Senioridade", ["Todas"] + SENIORIDADE_ORDER, key="filtro_senioridade_nivel"
+        )
+
+    nivel_mes = pipe_nivel_df[pipe_nivel_df["mes"] == mes_sel2].copy()
+    if carreira_filtro != "Todas":
+        nivel_mes = nivel_mes[nivel_mes["chapter"] == carreira_filtro]
+    if senioridade_filtro != "Todas":
+        nivel_mes = nivel_mes[nivel_mes["senioridade"] == senioridade_filtro]
+
+    if nivel_mes.empty:
+        render_note("Sem dado de volume por nível para este recorte.", variant="neutral")
+    else:
+        pivot_nivel = nivel_mes.pivot_table(
+            index=["chapter", "senioridade"], columns="etapa", values="candidatos", aggfunc="sum"
+        )
+        etapa_cols = [s for s in STAGES_ORDER if s in pivot_nivel.columns]
+        pivot_nivel = pivot_nivel[etapa_cols]
+
+        thresholds = {}
+        for et in etapa_cols:
+            col_vals = pivot_nivel[et].dropna()
+            media, desvio = col_vals.mean(), col_vals.std(ddof=0)
+            thresholds[et] = media + 1.5 * desvio if desvio and pd.notna(desvio) else media * 1.5
+
+        table_rows = []
+        for (chapter, senioridade), vals in pivot_nivel.iterrows():
+            row = {"Chapter": chapter, "Senioridade": senioridade}
+            for et in etapa_cols:
+                v = vals[et]
+                if pd.isna(v):
+                    row[et] = "—"
+                else:
+                    v = int(v)
+                    flag = " 🔺" if v >= 5 and v > thresholds[et] else ""
+                    row[et] = f"{v}{flag}"
+            table_rows.append(row)
+        tabela_nivel = pd.DataFrame(table_rows)
+        render_table(tabela_nivel, numeric_cols=set(etapa_cols))
+
     st.markdown("##### Gargalos e SLA")
     st.caption("Etapas com tempo médio acima da meta definida, ordenadas da mais crítica para a menos crítica.")
+
+    status_counts = sla_calc["status_sla"].value_counts()
+    resumo_status = [
+        ("🔴 Crítico", int(status_counts.get("critico", 0)), RED),
+        ("🟡 Atenção", int(status_counts.get("atencao", 0)), AMBER),
+        ("🟢 OK", int(status_counts.get("ok", 0)), GREEN),
+    ]
+    st.markdown(
+        '<div class="exec-kpi-row" style="margin-bottom:10px;">'
+        + "".join(
+            f'<div class="exec-kpi-card" style="text-align:center;">'
+            f'<div class="exec-kpi-label" style="color:{color}">{label}</div>'
+            f'<div class="exec-kpi-value" style="color:{color}">{count}</div>'
+            f'<div class="exec-kpi-note">combinações chapter × etapa neste mês</div></div>'
+            for label, count, color in resumo_status
+        )
+        + "</div>",
+        unsafe_allow_html=True,
+    )
+
     sla_df = dfp_mes.dropna(subset=["excesso_dias"]).copy()
     sla_df = sla_df[
         ["chapter", "etapa", "tempo_medio_dias", "meta_sla_dias", "excesso_dias", "status_sla"]

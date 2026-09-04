@@ -43,12 +43,17 @@ assets/                         → logo da Artefact extraída do Branding Guide
 
 farol_executivo.csv             → grão: mês × chapter × senioridade — demanda, oferta, gap, farol
 funil_pipe.csv                  → grão: mês × chapter × etapa — volume, conversão, SLA
+funil_pipe_nivel.csv            → grão: mês × chapter × senioridade × etapa — mesmo volume de
+                                   funil_pipe.csv, quebrado por senioridade (soma bate com funil_pipe.csv)
 su_banco_talentos.csv           → grão: candidato — banco de "See You Soon" e score de reativação
+su_ofertas.csv                  → grão: mês × chapter — ofertas e aceites vindos do banco See You Soon
 log_alertas.csv                 → grão: evento — histórico de mudanças de farol (auditoria do Google Chat)
 propostas_recusadas.csv         → grão: proposta recusada — motivo e tempo até a recusa
 
-build_mocks.py                  → script que gera os 5 CSVs acima (dados fictícios, mas com a
-                                   mesma estrutura planejada para os dados reais)
+build_mocks.py                  → não está neste repositório (referência histórica); os CSVs mock
+                                   principais foram criados à mão. gerar_mocks_extra.py cobre só os
+                                   dois CSVs derivados (funil_pipe_nivel.csv e su_ofertas.csv),
+                                   recalculando-os a partir de farol_executivo.csv e funil_pipe.csv.
 
 CONTEXTO.txt                    → plano-base original do projeto (fórmula do gap, fontes, riscos)
 "Farol de Hiring - Discovery.docx" → documento de discovery (arquitetura, KPIs, visualizações,
@@ -117,9 +122,13 @@ mouse, drill-down por senioridade com bullet chart (oferta ajustada vs. demanda
 líquida de referência). Cada card também mostra o pipe qualificado daquele
 chapter no mês.
 
-**Visão do Pipe** — funil de volume por etapa, conversão etapa a etapa, heatmap
-de candidatos por etapa × chapter, tabela de gargalos e SLA, e uma seção de
-propostas recusadas (motivo + tempo até a recusa).
+**Visão do Pipe** — KPIs de topo (conversão total do pipe, taxa de aceite de
+oferta geral, taxa de aceite e tempo médio no banco do See You Soon), funil de
+volume por etapa, conversão etapa a etapa, taxa de aceite por carreira (geral
+e See You Soon), heatmap de candidatos por etapa × chapter, tabela de volume
+por etapa e por nível (com filtro de carreira/senioridade e flag de excesso de
+volume), resumo de status e tabela de gargalos e SLA, e uma seção de propostas
+recusadas (motivo + tempo até a recusa).
 
 As etapas do funil seguem os nomes reais do processo (conforme o deck *Projeto
 Farol de Contratação*, jun/2026): Envio de Currículo → Entrevista Fit →
