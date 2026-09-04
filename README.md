@@ -127,8 +127,10 @@ oferta geral, taxa de aceite e tempo médio no banco do See You Soon), funil de
 volume por etapa, conversão etapa a etapa, taxa de aceite por carreira (geral
 e See You Soon), heatmap de candidatos por etapa × chapter, tabela de volume
 por etapa e por nível (com filtro de carreira/senioridade e flag de excesso de
-volume), resumo de status e tabela de gargalos e SLA, e uma seção de propostas
-recusadas (motivo + tempo até a recusa).
+volume), resumo de status, gráfico de candidatos parados por etapa (atenção
+e crítico, somando todos os chapters, com modal de detalhamento por
+chapter) e tabela de gargalos e SLA, e uma seção de propostas recusadas
+(motivo + tempo até a recusa).
 
 Dois gráficos da Visão do Pipe (conversão etapa a etapa e tempo médio por
 etapa) abrem um modal de detalhamento por carreira ao clicar numa barra —

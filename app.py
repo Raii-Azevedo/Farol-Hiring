@@ -691,20 +691,33 @@ def chart_hint(text: str) -> None:
     )
 
 
-def chart_drilldown_fallback(label: str, etapas: list, on_pick, key_prefix: str) -> None:
+def chart_drilldown_fallback(label: str, options: list, on_pick, key_prefix: str) -> None:
     """Alternativa garantida ao clique na barra: algumas combinacoes de
     navegador/versao do Plotly podem nao disparar o evento de selecao de
     forma confiavel, e sem esse fallback o usuario ficaria sem conseguir
-    abrir o detalhamento. Mostra um seletor de etapa compacto + botao que
-    abre o mesmo modal do clique na barra."""
+    abrir o detalhamento. Mostra um seletor compacto + botao que abre o
+    mesmo modal do clique na barra.
+
+    `options` aceita uma lista simples de valores (ex.: nomes de etapa,
+    usados como rotulo e valor) ou uma lista de pares
+    (rotulo_exibido, valor) quando o rotulo precisa ser mais descritivo
+    que o valor em si (ex.: "Técnica 2 · Crítico (26)")."""
+    if not options:
+        return
+    is_pairs = isinstance(options[0], tuple)
+    display_labels = [o[0] for o in options] if is_pairs else options
     c1, c2 = st.columns([3, 1])
     with c1:
-        etapa_pick = st.selectbox(
-            label, etapas, key=f"{key_prefix}_fallback_sel", label_visibility="collapsed"
+        pick = st.selectbox(
+            label, display_labels, key=f"{key_prefix}_fallback_sel", label_visibility="collapsed"
         )
     with c2:
         if st.button("Ver detalhe", key=f"{key_prefix}_fallback_btn", use_container_width=True):
-            on_pick(etapa_pick)
+            if is_pairs:
+                value = next(o[1] for o in options if o[0] == pick)
+                on_pick(value)
+            else:
+                on_pick(pick)
 
 
 def brand_heat_scale() -> list:
@@ -721,6 +734,23 @@ def _clicked_category(event, axis: str = "y"):
     if not points:
         return None
     return points[0].get(axis)
+
+
+def _clicked_stage_status(event):
+    """Extrai (etapa, status_sla) clicados num gráfico de barras agrupado
+    com 2 séries (Atenção = trace 0, Crítico = trace 1). Retorna None se
+    nada foi clicado nesta execução do script."""
+    if not event:
+        return None
+    points = event.get("selection", {}).get("points", [])
+    if not points:
+        return None
+    p = points[0]
+    etapa = p.get("x")
+    if etapa is None:
+        return None
+    status_key = "critico" if p.get("curve_number") == 1 else "atencao"
+    return etapa, status_key
 
 
 @st.dialog("Detalhamento por carreira")
@@ -764,6 +794,38 @@ def show_tempo_drilldown(etapa: str, mes: str) -> None:
     )
     tbl["Tempo médio (dias)"] = tbl["Tempo médio (dias)"].map(lambda v: f"{v:.1f}")
     render_table(tbl, numeric_cols={"Tempo médio (dias)"})
+
+
+@st.dialog("Detalhamento por chapter")
+def show_parados_drilldown(etapa: str, status_key: str, mes: str) -> None:
+    status_label = "Crítico" if status_key == "critico" else "Atenção"
+    st.markdown(f"#### {etapa} · {status_label}")
+    st.caption(
+        f"Chapters com candidatos parados em \"{status_label.lower()}\" nesta etapa — {MES_LABELS[mes]}."
+    )
+    df = pipe_df[
+        (pipe_df["mes"] == mes) & (pipe_df["etapa"] == etapa) & (pipe_df["status_sla"] == status_key)
+    ].dropna(subset=["candidatos"]).copy()
+    if df.empty:
+        render_note("Nenhum chapter com candidatos parados neste recorte.", variant="neutral")
+        return
+    df = df.sort_values("candidatos", ascending=False)
+    total = int(df["candidatos"].sum())
+    st.caption(f"Total: **{total} candidato(s)** parado(s) nesta etapa, neste status.")
+    tbl = df[["chapter", "candidatos", "tempo_medio_dias", "meta_sla_dias", "excesso_dias"]].rename(
+        columns={
+            "chapter": "Chapter",
+            "candidatos": "Candidatos",
+            "tempo_medio_dias": "Tempo médio (dias)",
+            "meta_sla_dias": "Meta (dias)",
+            "excesso_dias": "Excesso (dias)",
+        }
+    )
+    tbl["Candidatos"] = tbl["Candidatos"].map(lambda v: f"{int(v)}")
+    tbl["Tempo médio (dias)"] = tbl["Tempo médio (dias)"].map(lambda v: f"{v:.1f}")
+    tbl["Meta (dias)"] = tbl["Meta (dias)"].map(lambda v: f"{v:.0f}")
+    tbl["Excesso (dias)"] = tbl["Excesso (dias)"].map(lambda v: f"{v:+.1f}")
+    render_table(tbl, numeric_cols={"Candidatos", "Tempo médio (dias)", "Meta (dias)", "Excesso (dias)"})
 
 
 CHART_LAYOUT = dict(
@@ -1403,6 +1465,67 @@ with tab_pipe:
         + "</div>",
         unsafe_allow_html=True,
     )
+
+    st.markdown("###### Candidatos parados por etapa")
+    st.caption(
+        "Candidatos em atenção e crítico em cada etapa do funil, somando todos os chapters "
+        "(cada combinação chapter × etapa acima da meta de SLA conta todos os candidatos que estão nela)."
+    )
+    parados = (
+        sla_calc[sla_calc["status_sla"].isin(["atencao", "critico"])]
+        .groupby(["etapa", "status_sla"])["candidatos"].sum()
+        .unstack(fill_value=0)
+    )
+    for col in ("atencao", "critico"):
+        if col not in parados.columns:
+            parados[col] = 0
+    parados = parados.reindex([e for e in STAGES_ORDER if e in parados.index])
+
+    if parados.empty:
+        render_note("Nenhum candidato em atenção ou crítico neste mês — todas as etapas dentro da meta.", variant="neutral")
+    else:
+        fig_parados = go.Figure()
+        fig_parados.add_trace(
+            go.Bar(
+                x=parados.index, y=parados["atencao"], name="Atenção", marker_color=AMBER,
+                hovertemplate="<b>%{x}</b><br>Atenção: <b>%{y}</b> candidato(s)<extra></extra>",
+            )
+        )
+        fig_parados.add_trace(
+            go.Bar(
+                x=parados.index, y=parados["critico"], name="Crítico", marker_color=RED,
+                hovertemplate="<b>%{x}</b><br>Crítico: <b>%{y}</b> candidato(s)<extra></extra>",
+            )
+        )
+        fig_parados.update_layout(
+            height=340, barmode="group", yaxis_title="Candidatos", clickmode="event+select",
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+            margin=dict(l=10, r=10, t=40, b=10),
+            **{k: v for k, v in CHART_LAYOUT.items() if k != "margin"},
+        )
+        parados_event = st.plotly_chart(
+            fig_parados, use_container_width=True, on_select="rerun", selection_mode="points", key="parados_chart_sel"
+        )
+        chart_hint("Clique em uma barra para ver o detalhamento por chapter.")
+
+        parados_options = []
+        for et in parados.index:
+            for status_key, status_label in (("critico", "Crítico"), ("atencao", "Atenção")):
+                n = int(parados.loc[et, status_key])
+                if n > 0:
+                    parados_options.append((f"{et} · {status_label} ({n})", (et, status_key)))
+        chart_drilldown_fallback(
+            "Ou escolha uma combinação",
+            parados_options,
+            lambda pair: show_parados_drilldown(pair[0], pair[1], mes_sel2),
+            "parados",
+        )
+
+        clicked_parados = _clicked_stage_status(parados_event)
+        guard_parados = f"{mes_sel2}|{clicked_parados}"
+        if clicked_parados and st.session_state.get("_last_parados_click") != guard_parados:
+            st.session_state["_last_parados_click"] = guard_parados
+            show_parados_drilldown(clicked_parados[0], clicked_parados[1], mes_sel2)
 
     sla_df = dfp_mes.dropna(subset=["excesso_dias"]).copy()
     sla_df = sla_df[
