@@ -205,6 +205,24 @@ st.markdown(
             color: #FFFFFF !important;
         }}
 
+        /* ---- st.dialog nativo (modais de detalhamento): mesmo problema do
+               tooltip acima -- o painel do modal e renderizado pelo chrome
+               nativo do Streamlit (sempre tema claro), entao o fundo fica
+               branco mesmo com o app em modo escuro, enquanto o texto interno
+               (paragrafos/legendas/tabelas) ja segue o PAL via as regras
+               "p, span, label" abaixo -- resultado: texto claro em fundo
+               branco, ilegivel. Forcamos o fundo do painel a acompanhar o
+               PAL da pagina. ---- */
+        [data-testid="stDialog"] > div {{
+            background-color: {PAL['surface']} !important;
+        }}
+        [data-testid="stDialog"] [aria-label="Close"] {{
+            color: {PAL['muted']} !important;
+        }}
+        [data-testid="stDialog"] [aria-label="Close"]:hover {{
+            color: {PAL['ink']} !important;
+        }}
+
         h1, h2, h3 {{ color: {PAL['ink']}; font-weight: 700; }}
         h3 {{ font-size: 16px; margin: 4px 0 2px; }}
         p, span, label, .stMarkdown, [data-testid="stCaptionContainer"] {{ color: {PAL['ink']}; }}
@@ -654,6 +672,39 @@ def render_finding(html_text: str) -> None:
         f'<div class="finding"><span class="finding-eyebrow">Achado</span><p>{html_text}</p></div>',
         unsafe_allow_html=True,
     )
+
+
+def chart_hint(text: str) -> None:
+    """Mini legenda abaixo de um grafico com modal de detalhamento --
+    reproduz o `.chart-hint` do mock visual (texto pequeno, cor muted,
+    icone de "clique"), para deixar claro que aquele grafico e clicavel."""
+    icon = (
+        f"<svg width=\"13\" height=\"13\" viewBox=\"0 0 24 24\" fill=\"none\" "
+        f"stroke=\"{PAL['muted']}\" stroke-width=\"2\" stroke-linecap=\"round\" "
+        f"stroke-linejoin=\"round\" style=\"flex-shrink:0;\">"
+        f"<path d=\"M3 3l7.07 16.97 2.51-7.39 7.39-2.51z\"/><path d=\"M13 13l6 6\"/></svg>"
+    )
+    st.markdown(
+        f"<div style=\"font-size:11.5px;color:{PAL['muted']};margin-top:6px;"
+        f"display:flex;align-items:center;gap:6px;\">{icon}{text}</div>",
+        unsafe_allow_html=True,
+    )
+
+
+def chart_drilldown_fallback(label: str, etapas: list, on_pick, key_prefix: str) -> None:
+    """Alternativa garantida ao clique na barra: algumas combinacoes de
+    navegador/versao do Plotly podem nao disparar o evento de selecao de
+    forma confiavel, e sem esse fallback o usuario ficaria sem conseguir
+    abrir o detalhamento. Mostra um seletor de etapa compacto + botao que
+    abre o mesmo modal do clique na barra."""
+    c1, c2 = st.columns([3, 1])
+    with c1:
+        etapa_pick = st.selectbox(
+            label, etapas, key=f"{key_prefix}_fallback_sel", label_visibility="collapsed"
+        )
+    with c2:
+        if st.button("Ver detalhe", key=f"{key_prefix}_fallback_btn", use_container_width=True):
+            on_pick(etapa_pick)
 
 
 def brand_heat_scale() -> list:
@@ -1150,11 +1201,16 @@ with tab_pipe:
                 hovertemplate="<b>%{y}</b><br>Conversão: <b>%{x:.0f}%</b> vieram da etapa anterior<extra></extra>",
             )
         )
-        fig_conv.update_layout(height=380, xaxis_title="% que avança da etapa anterior", **CHART_LAYOUT)
+        fig_conv.update_layout(
+            height=380, xaxis_title="% que avança da etapa anterior", clickmode="event+select", **CHART_LAYOUT
+        )
         conv_event = st.plotly_chart(
             fig_conv, use_container_width=True, on_select="rerun", selection_mode="points", key="conv_chart_sel"
         )
-        st.caption("👆 Clique em uma barra para comparar essa etapa entre todos os chapters.")
+        chart_hint("Clique em uma barra para comparar essa etapa entre todos os chapters.")
+        chart_drilldown_fallback(
+            "Ou escolha uma etapa", conv["etapa"].tolist(), lambda et: show_conv_drilldown(et, mes_sel2), "conv"
+        )
         aceite_chapter = taxa_aceite_oferta(mes_sel2, chapter_sel2)
         if aceite_chapter is not None:
             st.caption(f"🔑 Taxa de aceite de oferta em **{chapter_sel2}** neste mês: **{aceite_chapter:.0f}%**")
@@ -1284,7 +1340,7 @@ with tab_pipe:
         render_table(tabela_nivel, numeric_cols=set(etapa_cols))
 
     st.markdown("##### Tempo médio por etapa (todos os chapters)")
-    st.caption("Média do tempo em cada etapa entre os chapters, neste mês — clique numa barra para ver a quebra por chapter.")
+    st.caption("Dias corridos que um candidato permanece em cada etapa — média entre os chapters, neste mês.")
     tempo_agg = (
         dfp_mes.dropna(subset=["tempo_medio_dias"])
         .groupby("etapa", as_index=False)["tempo_medio_dias"].mean()
@@ -1306,10 +1362,20 @@ with tab_pipe:
                 hovertemplate="<b>%{x}</b><br>Tempo médio: <b>%{y:.1f} dias</b><extra></extra>",
             )
         )
-        fig_tempo_agg.update_layout(height=320, yaxis_title="Dias corridos", **CHART_LAYOUT)
+        fig_tempo_agg.update_layout(
+            height=320, yaxis_title="Dias corridos", clickmode="event+select", **CHART_LAYOUT
+        )
         tempo_event = st.plotly_chart(
             fig_tempo_agg, use_container_width=True, on_select="rerun", selection_mode="points", key="tempo_chart_sel"
         )
+        chart_hint("Clique em uma barra para ver a quebra por chapter.")
+        chart_drilldown_fallback(
+            "Ou escolha uma etapa",
+            tempo_agg["etapa"].tolist(),
+            lambda et: show_tempo_drilldown(et, mes_sel2),
+            "tempo",
+        )
+
         etapa_click_tempo = _clicked_category(tempo_event, axis="x")
         guard_tempo = f"{mes_sel2}|{etapa_click_tempo}"
         if etapa_click_tempo and st.session_state.get("_last_tempo_click") != guard_tempo:

@@ -130,6 +130,15 @@ por etapa e por nível (com filtro de carreira/senioridade e flag de excesso de
 volume), resumo de status e tabela de gargalos e SLA, e uma seção de propostas
 recusadas (motivo + tempo até a recusa).
 
+Dois gráficos da Visão do Pipe (conversão etapa a etapa e tempo médio por
+etapa) abrem um modal de detalhamento por carreira ao clicar numa barra —
+abaixo de cada um deles há uma mini legenda indicando isso, e também um
+seletor + botão "Ver detalhe" como alternativa garantida, já que o clique
+direto na barra depende do navegador/versão do Plotly registrar o evento de
+seleção corretamente. O modal segue o tema claro/escuro da página (o chrome
+nativo do Streamlit é sempre claro, então o fundo do modal é forçado via CSS
+a acompanhar o tema ativo).
+
 As etapas do funil seguem os nomes reais do processo (conforme o deck *Projeto
 Farol de Contratação*, jun/2026): Envio de Currículo → Entrevista Fit →
 Técnica 1 → Técnica 2 → Conversa com André → Oferta → Contratação, com o
