@@ -189,6 +189,22 @@ st.markdown(
             border-color: {PINK}; color: {PINK};
         }}
 
+        /* ---- tooltip nativo do Streamlit (help="..." em botoes/inputs,
+               como o botao de alternar tema) — o chrome do Streamlit fica
+               sempre no tema claro (.streamlit/config.toml), entao esse
+               tooltip nao pode seguir o PAL (que muda com o toggle
+               claro/escuro da pagina): dependendo do tema ativo, o texto
+               saia com a mesma cor do fundo do balao e sumia. Fixamos
+               balao escuro + texto claro sempre, igual ao tooltip
+               customizado dos cards do farol (.farol-card[data-tip]). ---- */
+        div[data-baseweb="tooltip"], [data-testid="stTooltipContent"] {{
+            background-color: #0B1330 !important;
+            border-radius: 8px !important;
+        }}
+        div[data-baseweb="tooltip"] *, [data-testid="stTooltipContent"] * {{
+            color: #FFFFFF !important;
+        }}
+
         h1, h2, h3 {{ color: {PAL['ink']}; font-weight: 700; }}
         h3 {{ font-size: 16px; margin: 4px 0 2px; }}
         p, span, label, .stMarkdown, [data-testid="stCaptionContainer"] {{ color: {PAL['ink']}; }}
@@ -644,6 +660,61 @@ def brand_heat_scale() -> list:
     return [[0.0, PAL["heat_low"]], [0.35, "#8B93C7"], [0.65, ARTEFACT_BLUE], [1.0, PINK]]
 
 
+def _clicked_category(event, axis: str = "y"):
+    """Extrai a categoria (etapa) clicada num gráfico de barras do Plotly via
+    st.plotly_chart(..., on_select="rerun"). Retorna None se nada foi clicado
+    nesta execução do script."""
+    if not event:
+        return None
+    points = event.get("selection", {}).get("points", [])
+    if not points:
+        return None
+    return points[0].get(axis)
+
+
+@st.dialog("Detalhamento por carreira")
+def show_conv_drilldown(etapa: str, mes: str) -> None:
+    st.markdown(f"#### {etapa}")
+    st.caption(f"% de candidatos que avançam nesta etapa, por chapter — {MES_LABELS[mes]}.")
+    df = pipe_df[(pipe_df["mes"] == mes) & (pipe_df["etapa"] == etapa)].dropna(subset=["conversao_pct"]).copy()
+    if df.empty:
+        render_note("Sem dado de conversão para esta etapa neste mês.", variant="neutral")
+        return
+    df = df.sort_values("conversao_pct", ascending=False)
+    media = df["conversao_pct"].mean()
+    melhor, pior = df.iloc[0], df.iloc[-1]
+    st.caption(
+        f"Média entre chapters: **{media:.0f}%** · Melhor: **{melhor['chapter']}** ({melhor['conversao_pct']:.0f}%) "
+        f"· Menor: **{pior['chapter']}** ({pior['conversao_pct']:.0f}%)"
+    )
+    tbl = df[["chapter", "conversao_pct"]].rename(columns={"chapter": "Chapter", "conversao_pct": "Conversão"})
+    tbl["Conversão"] = tbl["Conversão"].map(lambda v: f"{v:.0f}%")
+    render_table(tbl, numeric_cols={"Conversão"})
+
+
+@st.dialog("Detalhamento por carreira")
+def show_tempo_drilldown(etapa: str, mes: str) -> None:
+    st.markdown(f"#### {etapa}")
+    st.caption(f"Tempo médio (dias corridos) nesta etapa, por chapter — {MES_LABELS[mes]}.")
+    df = pipe_df[(pipe_df["mes"] == mes) & (pipe_df["etapa"] == etapa)].dropna(subset=["tempo_medio_dias"]).copy()
+    if df.empty:
+        render_note("Sem dado de tempo para esta etapa neste mês.", variant="neutral")
+        return
+    df = df.sort_values("tempo_medio_dias", ascending=False)
+    media = df["tempo_medio_dias"].mean()
+    mais_lento, mais_rapido = df.iloc[0], df.iloc[-1]
+    st.caption(
+        f"Média entre chapters: **{media:.1f} dias** · Mais lento: **{mais_lento['chapter']}** "
+        f"({mais_lento['tempo_medio_dias']:.1f}d) · Mais rápido: **{mais_rapido['chapter']}** "
+        f"({mais_rapido['tempo_medio_dias']:.1f}d)"
+    )
+    tbl = df[["chapter", "tempo_medio_dias"]].rename(
+        columns={"chapter": "Chapter", "tempo_medio_dias": "Tempo médio (dias)"}
+    )
+    tbl["Tempo médio (dias)"] = tbl["Tempo médio (dias)"].map(lambda v: f"{v:.1f}")
+    render_table(tbl, numeric_cols={"Tempo médio (dias)"})
+
+
 CHART_LAYOUT = dict(
     margin=dict(l=10, r=10, t=10, b=10),
     plot_bgcolor=PAL["surface"],
@@ -1080,10 +1151,19 @@ with tab_pipe:
             )
         )
         fig_conv.update_layout(height=380, xaxis_title="% que avança da etapa anterior", **CHART_LAYOUT)
-        st.plotly_chart(fig_conv, use_container_width=True)
+        conv_event = st.plotly_chart(
+            fig_conv, use_container_width=True, on_select="rerun", selection_mode="points", key="conv_chart_sel"
+        )
+        st.caption("👆 Clique em uma barra para comparar essa etapa entre todos os chapters.")
         aceite_chapter = taxa_aceite_oferta(mes_sel2, chapter_sel2)
         if aceite_chapter is not None:
             st.caption(f"🔑 Taxa de aceite de oferta em **{chapter_sel2}** neste mês: **{aceite_chapter:.0f}%**")
+
+        etapa_click_conv = _clicked_category(conv_event)
+        guard_conv = f"{mes_sel2}|{etapa_click_conv}"
+        if etapa_click_conv and st.session_state.get("_last_conv_click") != guard_conv:
+            st.session_state["_last_conv_click"] = guard_conv
+            show_conv_drilldown(etapa_click_conv, mes_sel2)
 
     col_ag, col_as = st.columns(2)
     with col_ag:
@@ -1202,6 +1282,39 @@ with tab_pipe:
             table_rows.append(row)
         tabela_nivel = pd.DataFrame(table_rows)
         render_table(tabela_nivel, numeric_cols=set(etapa_cols))
+
+    st.markdown("##### Tempo médio por etapa (todos os chapters)")
+    st.caption("Média do tempo em cada etapa entre os chapters, neste mês — clique numa barra para ver a quebra por chapter.")
+    tempo_agg = (
+        dfp_mes.dropna(subset=["tempo_medio_dias"])
+        .groupby("etapa", as_index=False)["tempo_medio_dias"].mean()
+    )
+    tempo_agg["ordem_etapa"] = tempo_agg["etapa"].map(
+        {s: i for i, s in enumerate(STAGES_ORDER)}
+    )
+    tempo_agg = tempo_agg.sort_values("ordem_etapa")
+    if tempo_agg.empty:
+        render_note("Sem dado de tempo médio para este mês.", variant="neutral")
+    else:
+        fig_tempo_agg = go.Figure(
+            go.Bar(
+                x=tempo_agg["etapa"],
+                y=tempo_agg["tempo_medio_dias"],
+                marker_color=ARTEFACT_BLUE,
+                text=tempo_agg["tempo_medio_dias"].map(lambda v: f"{v:.1f}d"),
+                textposition="outside",
+                hovertemplate="<b>%{x}</b><br>Tempo médio: <b>%{y:.1f} dias</b><extra></extra>",
+            )
+        )
+        fig_tempo_agg.update_layout(height=320, yaxis_title="Dias corridos", **CHART_LAYOUT)
+        tempo_event = st.plotly_chart(
+            fig_tempo_agg, use_container_width=True, on_select="rerun", selection_mode="points", key="tempo_chart_sel"
+        )
+        etapa_click_tempo = _clicked_category(tempo_event, axis="x")
+        guard_tempo = f"{mes_sel2}|{etapa_click_tempo}"
+        if etapa_click_tempo and st.session_state.get("_last_tempo_click") != guard_tempo:
+            st.session_state["_last_tempo_click"] = guard_tempo
+            show_tempo_drilldown(etapa_click_tempo, mes_sel2)
 
     st.markdown("##### Gargalos e SLA")
     st.caption("Etapas com tempo médio acima da meta definida, ordenadas da mais crítica para a menos crítica.")
