@@ -223,6 +223,81 @@ st.markdown(
             color: {PAL['ink']} !important;
         }}
 
+        /* ---- "Candidatos parados por etapa" (mesmo layout do mock):
+               cards de resumo, tabela de chips clicaveis (status x etapa)
+               e legenda de cores ---- */
+        .stage-summary-row {{ display: flex; gap: 14px; flex-wrap: wrap; margin: 10px 0 16px; }}
+        .stage-summary-card {{
+            display: flex; align-items: center; gap: 10px;
+            background: {PAL['surface']}; border: 1px solid {PAL['line']};
+            border-radius: 12px; padding: 10px 16px; box-shadow: 0 2px 8px {PAL['shadow']};
+        }}
+        .stage-summary-card .ssc-dot {{ width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }}
+        .stage-summary-card .ssc-num {{
+            font-family: 'Roboto Mono', monospace; font-weight: 700; font-size: 16px; color: {PAL['ink']};
+        }}
+        .stage-summary-card .ssc-lbl {{ font-size: 11.5px; color: {PAL['muted']}; }}
+
+        .stage-th {{
+            font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em;
+            color: {PAL['muted']}; line-height: 1.3; padding-bottom: 6px; min-height: 48px;
+            border-bottom: 1px solid {PAL['line']};
+        }}
+        .stage-th .th-note {{
+            display: block; font-size: 9.5px; font-weight: 400; text-transform: none;
+            letter-spacing: 0; opacity: .75; margin-top: 3px;
+        }}
+        .status-row-label {{
+            display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 13px;
+            color: {PAL['ink']}; min-height: 38px;
+        }}
+        .status-row-label .dot {{ width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }}
+        .stage-chip-empty {{
+            text-align: center; color: {PAL['muted']}; opacity: .45; font-size: 13px;
+            min-height: 38px; line-height: 38px;
+        }}
+
+        /* o marcador so existe para o :has() abaixo achar a coluna do chip --
+           ele proprio fica escondido (mesma tecnica do botao de tema) */
+        div[data-testid="stMarkdown"]:has(.chip-marker) {{ display: none; }}
+        div[data-testid="column"]:has(.chip-marker) .stButton > button {{
+            font-family: 'Roboto Mono', monospace; font-weight: 700; font-size: 13px;
+            border-radius: 8px; border: none; min-height: 32px; padding: 2px 8px;
+            transition: transform .12s ease, box-shadow .12s ease;
+        }}
+        div[data-testid="column"]:has(.chip-atencao) .stButton > button {{
+            background: {STATUS_BG_BY_THEME[THEME]['manter']};
+            color: {'#966006' if THEME == 'light' else '#FFD48A'};
+        }}
+        div[data-testid="column"]:has(.chip-critico) .stButton > button {{
+            background: {STATUS_BG_BY_THEME[THEME]['pausar']};
+            color: {'#B4262A' if THEME == 'light' else '#FFA8AB'};
+        }}
+        div[data-testid="column"]:has(.chip-marker) .stButton > button:hover {{
+            transform: scale(1.07); box-shadow: 0 0 0 3px {PAL['shadow_hover']};
+        }}
+
+        .legend-row {{ display: flex; gap: 18px; flex-wrap: wrap; margin-top: 12px; }}
+        .legend-item {{ display: flex; align-items: center; gap: 7px; font-size: 11.5px; color: {PAL['muted']}; }}
+        .legend-dot {{ width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }}
+
+        /* ---- lista de candidatos dentro do modal ---- */
+        .cand-item {{
+            display: flex; align-items: center; justify-content: space-between; gap: 12px;
+            padding: 10px 12px; border-radius: 10px; background: {PAL['surface2']}; margin-bottom: 8px;
+        }}
+        .cand-left {{ display: flex; align-items: center; gap: 10px; min-width: 0; }}
+        .cand-avatar {{
+            width: 32px; height: 32px; border-radius: 50%; flex-shrink: 0;
+            background: {GRADIENT_CSS}; color: #fff; font-size: 11px; font-weight: 700;
+            display: flex; align-items: center; justify-content: center;
+        }}
+        .cand-name {{ font-size: 13px; font-weight: 700; color: {PAL['ink']}; }}
+        .cand-role {{ font-size: 11px; color: {PAL['muted']}; }}
+        .cand-right {{ text-align: right; flex-shrink: 0; }}
+        .cand-days {{ font-family: 'Roboto Mono', monospace; font-weight: 700; font-size: 14px; }}
+        .cand-meta {{ font-size: 10.5px; color: {PAL['muted']}; }}
+
         h1, h2, h3 {{ color: {PAL['ink']}; font-weight: 700; }}
         h3 {{ font-size: 16px; margin: 4px 0 2px; }}
         p, span, label, .stMarkdown, [data-testid="stCaptionContainer"] {{ color: {PAL['ink']}; }}
@@ -457,11 +532,17 @@ def load_data():
         columns=["candidato", "chapter", "senioridade", "dias_no_banco", "probabilidade_reativacao_pct",
                  "urgencia_gap_chapter_pct", "score_priorizacao", "status"]
     )
-    return farol, pipe, recusas, pipe_nivel, su_ofertas, su_banco
+    parados_path = DATA_DIR / "candidatos_parados.csv"
+    parados = pd.read_csv(parados_path) if parados_path.exists() else pd.DataFrame(
+        columns=["mes", "mes_label", "chapter", "vaga", "squad", "senioridade", "etapa",
+                 "ordem_etapa", "candidato", "dias_na_etapa", "meta_sla_dias", "status"]
+    )
+    return farol, pipe, recusas, pipe_nivel, su_ofertas, su_banco, parados
 
 
 try:
-    farol_df, pipe_df, recusas_df, pipe_nivel_df, su_ofertas_df, su_banco_df = load_data()
+    (farol_df, pipe_df, recusas_df, pipe_nivel_df, su_ofertas_df, su_banco_df,
+     parados_df) = load_data()
 except FileNotFoundError as e:
     st.error(
         "Não encontrei farol_executivo.csv e/ou funil_pipe.csv na mesma pasta do app.py. "
@@ -691,35 +772,6 @@ def chart_hint(text: str) -> None:
     )
 
 
-def chart_drilldown_fallback(label: str, options: list, on_pick, key_prefix: str) -> None:
-    """Alternativa garantida ao clique na barra: algumas combinacoes de
-    navegador/versao do Plotly podem nao disparar o evento de selecao de
-    forma confiavel, e sem esse fallback o usuario ficaria sem conseguir
-    abrir o detalhamento. Mostra um seletor compacto + botao que abre o
-    mesmo modal do clique na barra.
-
-    `options` aceita uma lista simples de valores (ex.: nomes de etapa,
-    usados como rotulo e valor) ou uma lista de pares
-    (rotulo_exibido, valor) quando o rotulo precisa ser mais descritivo
-    que o valor em si (ex.: "Técnica 2 · Crítico (26)")."""
-    if not options:
-        return
-    is_pairs = isinstance(options[0], tuple)
-    display_labels = [o[0] for o in options] if is_pairs else options
-    c1, c2 = st.columns([3, 1])
-    with c1:
-        pick = st.selectbox(
-            label, display_labels, key=f"{key_prefix}_fallback_sel", label_visibility="collapsed"
-        )
-    with c2:
-        if st.button("Ver detalhe", key=f"{key_prefix}_fallback_btn", use_container_width=True):
-            if is_pairs:
-                value = next(o[1] for o in options if o[0] == pick)
-                on_pick(value)
-            else:
-                on_pick(pick)
-
-
 def brand_heat_scale() -> list:
     return [[0.0, PAL["heat_low"]], [0.35, "#8B93C7"], [0.65, ARTEFACT_BLUE], [1.0, PINK]]
 
@@ -734,23 +786,6 @@ def _clicked_category(event, axis: str = "y"):
     if not points:
         return None
     return points[0].get(axis)
-
-
-def _clicked_stage_status(event):
-    """Extrai (etapa, status_sla) clicados num gráfico de barras agrupado
-    com 2 séries (Atenção = trace 0, Crítico = trace 1). Retorna None se
-    nada foi clicado nesta execução do script."""
-    if not event:
-        return None
-    points = event.get("selection", {}).get("points", [])
-    if not points:
-        return None
-    p = points[0]
-    etapa = p.get("x")
-    if etapa is None:
-        return None
-    status_key = "critico" if p.get("curve_number") == 1 else "atencao"
-    return etapa, status_key
 
 
 @st.dialog("Detalhamento por carreira")
@@ -796,36 +831,77 @@ def show_tempo_drilldown(etapa: str, mes: str) -> None:
     render_table(tbl, numeric_cols={"Tempo médio (dias)"})
 
 
-@st.dialog("Detalhamento por chapter")
-def show_parados_drilldown(etapa: str, status_key: str, mes: str) -> None:
+def _parados_no_mes(mes: str, etapa: str = None, status_key: str = None, vaga: str = None):
+    """Recorte do candidatos_parados.csv (quem está parado em cada etapa)."""
+    df = parados_df[parados_df["mes"] == mes]
+    if etapa is not None:
+        df = df[df["etapa"] == etapa]
+    if status_key is not None:
+        df = df[df["status"] == status_key]
+    if vaga is not None:
+        df = df[df["vaga"] == vaga]
+    return df
+
+
+def _abrir_parados(etapa: str, status_key: str, vaga=None) -> None:
+    """Guarda o recorte escolhido e pede a reabertura do modal no próximo run
+    (o Streamlit não permite abrir um dialog de dentro de outro)."""
+    st.session_state["_parados_sel"] = {"etapa": etapa, "status": status_key, "vaga": vaga}
+    st.session_state["_parados_reabrir"] = True
+
+
+@st.dialog("Candidatos parados — por vaga")
+def show_parados_vagas(etapa: str, status_key: str, mes: str) -> None:
     status_label = "Crítico" if status_key == "critico" else "Atenção"
+    df = _parados_no_mes(mes, etapa, status_key)
     st.markdown(f"#### {etapa} · {status_label}")
-    st.caption(
-        f"Chapters com candidatos parados em \"{status_label.lower()}\" nesta etapa — {MES_LABELS[mes]}."
-    )
-    df = pipe_df[
-        (pipe_df["mes"] == mes) & (pipe_df["etapa"] == etapa) & (pipe_df["status_sla"] == status_key)
-    ].dropna(subset=["candidatos"]).copy()
     if df.empty:
-        render_note("Nenhum chapter com candidatos parados neste recorte.", variant="neutral")
+        render_note("Nenhum candidato parado neste recorte.", variant="neutral")
         return
-    df = df.sort_values("candidatos", ascending=False)
-    total = int(df["candidatos"].sum())
-    st.caption(f"Total: **{total} candidato(s)** parado(s) nesta etapa, neste status.")
-    tbl = df[["chapter", "candidatos", "tempo_medio_dias", "meta_sla_dias", "excesso_dias"]].rename(
-        columns={
-            "chapter": "Chapter",
-            "candidatos": "Candidatos",
-            "tempo_medio_dias": "Tempo médio (dias)",
-            "meta_sla_dias": "Meta (dias)",
-            "excesso_dias": "Excesso (dias)",
-        }
+    st.caption(
+        f"{len(df)} candidato(s) parado(s) em \"{status_label.lower()}\" nesta etapa em "
+        f"{MES_LABELS[mes]}. Clique em uma vaga para ver quem são."
     )
-    tbl["Candidatos"] = tbl["Candidatos"].map(lambda v: f"{int(v)}")
-    tbl["Tempo médio (dias)"] = tbl["Tempo médio (dias)"].map(lambda v: f"{v:.1f}")
-    tbl["Meta (dias)"] = tbl["Meta (dias)"].map(lambda v: f"{v:.0f}")
-    tbl["Excesso (dias)"] = tbl["Excesso (dias)"].map(lambda v: f"{v:+.1f}")
-    render_table(tbl, numeric_cols={"Candidatos", "Tempo médio (dias)", "Meta (dias)", "Excesso (dias)"})
+    por_vaga = (
+        df.groupby(["vaga", "squad"], as_index=False)
+        .agg(qtd=("candidato", "size"), pior=("dias_na_etapa", "max"))
+        .sort_values("qtd", ascending=False)
+    )
+    for i, row in enumerate(por_vaga.itertuples(index=False)):
+        rotulo = f"{row.vaga}  ·  {row.squad}  —  {row.qtd} candidato(s), até {row.pior}d parados"
+        if st.button(rotulo, key=f"parados_vaga_{status_key}_{i}", use_container_width=True):
+            _abrir_parados(etapa, status_key, row.vaga)
+            st.rerun()
+
+
+@st.dialog("Candidatos parados — quem está parado")
+def show_parados_candidatos(etapa: str, status_key: str, vaga: str, mes: str) -> None:
+    status_label = "Crítico" if status_key == "critico" else "Atenção"
+    df = _parados_no_mes(mes, etapa, status_key, vaga).sort_values("dias_na_etapa", ascending=False)
+    st.markdown(f"#### {vaga}")
+    if df.empty:
+        render_note("Nenhum candidato parado nesta vaga.", variant="neutral")
+        return
+    st.caption(
+        f"{len(df)} candidato(s) parado(s) em \"{etapa}\" · {status_label} — {MES_LABELS[mes]}."
+    )
+    cor = RED if status_key == "critico" else AMBER
+    itens = []
+    for row in df.itertuples(index=False):
+        iniciais = "".join(parte[0] for parte in str(row.candidato).split()[:2]).upper()
+        itens.append(
+            f'<div class="cand-item">'
+            f'<div class="cand-left"><div class="cand-avatar">{iniciais}</div>'
+            f'<div><div class="cand-name">{row.candidato}</div>'
+            f'<div class="cand-role">{row.chapter} · {row.senioridade} · {row.squad}</div></div></div>'
+            f'<div class="cand-right"><div class="cand-days" style="color:{cor}">{row.dias_na_etapa}d</div>'
+            f'<div class="cand-meta">meta {row.meta_sla_dias}d</div></div>'
+            f"</div>"
+        )
+    st.markdown("".join(itens), unsafe_allow_html=True)
+    if st.button("‹ Voltar para as vagas", key=f"parados_voltar_{status_key}"):
+        _abrir_parados(etapa, status_key, None)
+        st.rerun()
 
 
 CHART_LAYOUT = dict(
@@ -1270,16 +1346,17 @@ with tab_pipe:
             fig_conv, use_container_width=True, on_select="rerun", selection_mode="points", key="conv_chart_sel"
         )
         chart_hint("Clique em uma barra para comparar essa etapa entre todos os chapters.")
-        chart_drilldown_fallback(
-            "Ou escolha uma etapa", conv["etapa"].tolist(), lambda et: show_conv_drilldown(et, mes_sel2), "conv"
-        )
         aceite_chapter = taxa_aceite_oferta(mes_sel2, chapter_sel2)
         if aceite_chapter is not None:
             st.caption(f"🔑 Taxa de aceite de oferta em **{chapter_sel2}** neste mês: **{aceite_chapter:.0f}%**")
 
         etapa_click_conv = _clicked_category(conv_event)
         guard_conv = f"{mes_sel2}|{etapa_click_conv}"
-        if etapa_click_conv and st.session_state.get("_last_conv_click") != guard_conv:
+        if not etapa_click_conv:
+            # seleção limpa (clique fora da barra): libera a mesma barra para
+            # abrir o modal de novo no próximo clique
+            st.session_state.pop("_last_conv_click", None)
+        elif st.session_state.get("_last_conv_click") != guard_conv:
             st.session_state["_last_conv_click"] = guard_conv
             show_conv_drilldown(etapa_click_conv, mes_sel2)
 
@@ -1431,19 +1508,108 @@ with tab_pipe:
             fig_tempo_agg, use_container_width=True, on_select="rerun", selection_mode="points", key="tempo_chart_sel"
         )
         chart_hint("Clique em uma barra para ver a quebra por chapter.")
-        chart_drilldown_fallback(
-            "Ou escolha uma etapa",
-            tempo_agg["etapa"].tolist(),
-            lambda et: show_tempo_drilldown(et, mes_sel2),
-            "tempo",
-        )
 
         etapa_click_tempo = _clicked_category(tempo_event, axis="x")
         guard_tempo = f"{mes_sel2}|{etapa_click_tempo}"
-        if etapa_click_tempo and st.session_state.get("_last_tempo_click") != guard_tempo:
+        if not etapa_click_tempo:
+            st.session_state.pop("_last_tempo_click", None)
+        elif st.session_state.get("_last_tempo_click") != guard_tempo:
             st.session_state["_last_tempo_click"] = guard_tempo
             show_tempo_drilldown(etapa_click_tempo, mes_sel2)
 
+    st.markdown("##### Candidatos parados por etapa")
+    st.caption(
+        "Candidatos em atenção e crítico em cada etapa do funil, somando todas as vagas abertas."
+    )
+
+    parados_mes = parados_df[parados_df["mes"] == mes_sel2] if not parados_df.empty else parados_df
+    n_cand_critico = int((parados_mes["status"] == "critico").sum()) if not parados_mes.empty else 0
+    n_cand_atencao = int((parados_mes["status"] == "atencao").sum()) if not parados_mes.empty else 0
+    n_cand_ativos = int(dfp_mes[dfp_mes["etapa"] != "Contratação"]["candidatos"].sum())
+    n_cand_ok = max(n_cand_ativos - n_cand_critico - n_cand_atencao, 0)
+
+    st.markdown(
+        '<div class="stage-summary-row">'
+        + "".join(
+            f'<div class="stage-summary-card"><span class="ssc-dot" style="background:{cor}"></span>'
+            f'<div><div class="ssc-num">{num}</div><div class="ssc-lbl">{rotulo}</div></div></div>'
+            for num, rotulo, cor in (
+                (n_cand_critico, "candidatos em estado crítico", RED),
+                (n_cand_atencao, "candidatos em atenção", AMBER),
+                (n_cand_ok, "candidatos dentro do prazo", GREEN),
+            )
+        )
+        + "</div>",
+        unsafe_allow_html=True,
+    )
+
+    if parados_mes.empty:
+        render_note(
+            "Nenhum candidato parado registrado neste mês (candidatos_parados.csv).", variant="neutral"
+        )
+    else:
+        etapas_parados = [e for e in STAGES_ORDER if e in set(parados_df["etapa"])]
+        metas_etapa = (
+            dfp_mes.dropna(subset=["meta_sla_dias"]).groupby("etapa")["meta_sla_dias"].max().to_dict()
+        )
+        contagem_parados = parados_mes.groupby(["etapa", "status"]).size().to_dict()
+        larguras = [1.45] + [1] * len(etapas_parados)
+
+        cabecalho = st.columns(larguras)
+        cabecalho[0].markdown('<div class="stage-th">Status</div>', unsafe_allow_html=True)
+        for coluna, etapa_col in zip(cabecalho[1:], etapas_parados):
+            meta = metas_etapa.get(etapa_col)
+            nota = ""
+            if meta is not None and pd.notna(meta):
+                nota = (
+                    f'<span class="th-note">Atenção: {int(meta) + 1}–{int(meta) + 5}d'
+                    f'<br>Crítico: &gt;{int(meta) + 5}d</span>'
+                )
+            coluna.markdown(f'<div class="stage-th">{etapa_col}{nota}</div>', unsafe_allow_html=True)
+
+        abrir_parados = bool(st.session_state.pop("_parados_reabrir", False))
+        for status_key, status_label, cor_status in (
+            ("atencao", "Atenção", AMBER),
+            ("critico", "Crítico", RED),
+        ):
+            linha = st.columns(larguras)
+            linha[0].markdown(
+                f'<div class="status-row-label"><span class="dot" style="background:{cor_status}"></span>'
+                f"{status_label}</div>",
+                unsafe_allow_html=True,
+            )
+            for i, (coluna, etapa_col) in enumerate(zip(linha[1:], etapas_parados)):
+                qtd = int(contagem_parados.get((etapa_col, status_key), 0))
+                with coluna:
+                    if qtd == 0:
+                        st.markdown('<div class="stage-chip-empty">–</div>', unsafe_allow_html=True)
+                        continue
+                    st.markdown(
+                        f'<span class="chip-marker chip-{status_key}"></span>', unsafe_allow_html=True
+                    )
+                    if st.button(str(qtd), key=f"chip_{status_key}_{i}", use_container_width=True):
+                        _abrir_parados(etapa_col, status_key, None)
+                        abrir_parados = True
+
+        chart_hint("Clique em um número para ver o detalhamento por vaga e quem está parado.")
+        st.markdown(
+            f'<div class="legend-row">'
+            f'<div class="legend-item"><span class="legend-dot" style="background:{AMBER}"></span>'
+            f"Atenção — passou da meta de SLA da etapa</div>"
+            f'<div class="legend-item"><span class="legend-dot" style="background:{RED}"></span>'
+            f"Crítico — mais de 5 dias acima da meta</div>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+
+        if abrir_parados and st.session_state.get("_parados_sel"):
+            _sel = st.session_state["_parados_sel"]
+            if _sel.get("vaga"):
+                show_parados_candidatos(_sel["etapa"], _sel["status"], _sel["vaga"], mes_sel2)
+            else:
+                show_parados_vagas(_sel["etapa"], _sel["status"], mes_sel2)
+
+    st.divider()
     st.markdown("##### Gargalos e SLA")
     st.caption("Etapas com tempo médio acima da meta definida, ordenadas da mais crítica para a menos crítica.")
 
@@ -1465,67 +1631,6 @@ with tab_pipe:
         + "</div>",
         unsafe_allow_html=True,
     )
-
-    st.markdown("###### Candidatos parados por etapa")
-    st.caption(
-        "Candidatos em atenção e crítico em cada etapa do funil, somando todos os chapters "
-        "(cada combinação chapter × etapa acima da meta de SLA conta todos os candidatos que estão nela)."
-    )
-    parados = (
-        sla_calc[sla_calc["status_sla"].isin(["atencao", "critico"])]
-        .groupby(["etapa", "status_sla"])["candidatos"].sum()
-        .unstack(fill_value=0)
-    )
-    for col in ("atencao", "critico"):
-        if col not in parados.columns:
-            parados[col] = 0
-    parados = parados.reindex([e for e in STAGES_ORDER if e in parados.index])
-
-    if parados.empty:
-        render_note("Nenhum candidato em atenção ou crítico neste mês — todas as etapas dentro da meta.", variant="neutral")
-    else:
-        fig_parados = go.Figure()
-        fig_parados.add_trace(
-            go.Bar(
-                x=parados.index, y=parados["atencao"], name="Atenção", marker_color=AMBER,
-                hovertemplate="<b>%{x}</b><br>Atenção: <b>%{y}</b> candidato(s)<extra></extra>",
-            )
-        )
-        fig_parados.add_trace(
-            go.Bar(
-                x=parados.index, y=parados["critico"], name="Crítico", marker_color=RED,
-                hovertemplate="<b>%{x}</b><br>Crítico: <b>%{y}</b> candidato(s)<extra></extra>",
-            )
-        )
-        fig_parados.update_layout(
-            height=340, barmode="group", yaxis_title="Candidatos", clickmode="event+select",
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
-            margin=dict(l=10, r=10, t=40, b=10),
-            **{k: v for k, v in CHART_LAYOUT.items() if k != "margin"},
-        )
-        parados_event = st.plotly_chart(
-            fig_parados, use_container_width=True, on_select="rerun", selection_mode="points", key="parados_chart_sel"
-        )
-        chart_hint("Clique em uma barra para ver o detalhamento por chapter.")
-
-        parados_options = []
-        for et in parados.index:
-            for status_key, status_label in (("critico", "Crítico"), ("atencao", "Atenção")):
-                n = int(parados.loc[et, status_key])
-                if n > 0:
-                    parados_options.append((f"{et} · {status_label} ({n})", (et, status_key)))
-        chart_drilldown_fallback(
-            "Ou escolha uma combinação",
-            parados_options,
-            lambda pair: show_parados_drilldown(pair[0], pair[1], mes_sel2),
-            "parados",
-        )
-
-        clicked_parados = _clicked_stage_status(parados_event)
-        guard_parados = f"{mes_sel2}|{clicked_parados}"
-        if clicked_parados and st.session_state.get("_last_parados_click") != guard_parados:
-            st.session_state["_last_parados_click"] = guard_parados
-            show_parados_drilldown(clicked_parados[0], clicked_parados[1], mes_sel2)
 
     sla_df = dfp_mes.dropna(subset=["excesso_dias"]).copy()
     sla_df = sla_df[

@@ -46,6 +46,9 @@ funil_pipe.csv                  → grão: mês × chapter × etapa — volume, 
 funil_pipe_nivel.csv            → grão: mês × chapter × senioridade × etapa — mesmo volume de
                                    funil_pipe.csv, quebrado por senioridade (soma bate com funil_pipe.csv)
 su_banco_talentos.csv           → grão: candidato — banco de "See You Soon" e score de reativação
+candidatos_parados.csv          → quem está parado em cada etapa (mock): vaga,
+                                  squad, dias na etapa e status (atenção/crítico)
+gerar_candidatos_parados.py     → gera candidatos_parados.csv a partir do funil
 su_ofertas.csv                  → grão: mês × chapter — ofertas e aceites vindos do banco See You Soon
 log_alertas.csv                 → grão: evento — histórico de mudanças de farol (auditoria do Google Chat)
 propostas_recusadas.csv         → grão: proposta recusada — motivo e tempo até a recusa
@@ -127,19 +130,19 @@ oferta geral, taxa de aceite e tempo médio no banco do See You Soon), funil de
 volume por etapa, conversão etapa a etapa, taxa de aceite por carreira (geral
 e See You Soon), heatmap de candidatos por etapa × chapter, tabela de volume
 por etapa e por nível (com filtro de carreira/senioridade e flag de excesso de
-volume), resumo de status, gráfico de candidatos parados por etapa (atenção
-e crítico, somando todos os chapters, com modal de detalhamento por
-chapter) e tabela de gargalos e SLA, e uma seção de propostas recusadas
-(motivo + tempo até a recusa).
+volume), a seção "Candidatos parados por etapa" (tabela status × etapa no
+mesmo formato do mock: clicar num número abre o detalhamento por vaga e, de
+lá, a lista de quem está parado e há quantos dias), resumo de status e tabela
+de gargalos e SLA, e uma seção de propostas recusadas (motivo + tempo até a
+recusa).
 
-Dois gráficos da Visão do Pipe (conversão etapa a etapa e tempo médio por
-etapa) abrem um modal de detalhamento por carreira ao clicar numa barra —
-abaixo de cada um deles há uma mini legenda indicando isso, e também um
-seletor + botão "Ver detalhe" como alternativa garantida, já que o clique
-direto na barra depende do navegador/versão do Plotly registrar o evento de
-seleção corretamente. O modal segue o tema claro/escuro da página (o chrome
-nativo do Streamlit é sempre claro, então o fundo do modal é forçado via CSS
-a acompanhar o tema ativo).
+Os detalhamentos abrem sempre pelo clique no próprio visual, como no mock:
+nos gráficos de conversão etapa a etapa e de tempo médio por etapa, clicando
+numa barra; em "Candidatos parados por etapa", clicando no número da célula.
+Abaixo de cada um há uma mini legenda indicando que ali tem detalhamento. Os
+modais seguem o tema claro/escuro da página (o chrome nativo do Streamlit é
+sempre claro, então o fundo do modal é forçado via CSS a acompanhar o tema
+ativo).
 
 As etapas do funil seguem os nomes reais do processo (conforme o deck *Projeto
 Farol de Contratação*, jun/2026): Envio de Currículo → Entrevista Fit →
