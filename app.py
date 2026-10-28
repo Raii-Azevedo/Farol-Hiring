@@ -468,8 +468,8 @@ st.markdown(
             </div>
         </div>
         <div class="right">
-            Protótipo visual · dados mock<br>
-            <b>Greenhouse + Artefactory</b> (simulados)
+            Dados oficiais<br>
+            <b>Greenhouse + Artefactory</b> (BigQuery)
         </div>
     </div>
     """,
@@ -509,12 +509,6 @@ def render_note(html_text: str, variant: str = "info") -> None:
         unsafe_allow_html=True,
     )
 
-
-render_note(
-    "Dados mock para prototipagem — ainda não conectado ao pipeline real (BigQuery). "
-    "Estrutura das colunas já reflete o modelo de dados planejado.",
-    variant="neutral",
-)
 
 _MES_PT = {1: "Jan", 2: "Fev", 3: "Mar", 4: "Abr", 5: "Mai", 6: "Jun",
            7: "Jul", 8: "Ago", 9: "Set", 10: "Out", 11: "Nov", 12: "Dez"}
@@ -560,6 +554,23 @@ DATASET_BQ = "greenhouse_dev"
 HORIZONTE_FAROL_DIAS = 45
 
 
+def _credenciais_bq():
+    """Credencial do BigQuery, em ordem de preferência:
+
+    1. service account em `.streamlit/secrets.toml`, sob [gcp_service_account]
+       — é o que funciona em deploy, onde não existe gcloud;
+    2. nada: cai na credencial de aplicação local, criada por
+       `gcloud auth application-default login`.
+    """
+    try:
+        sa = st.secrets["gcp_service_account"]
+    except Exception:
+        return None
+    from google.oauth2 import service_account
+
+    return service_account.Credentials.from_service_account_info(dict(sa))
+
+
 @st.cache_data(ttl=1800, show_spinner="Lendo as views do BigQuery…")
 def load_data():
     """Lê as duas views oficiais e deriva, em pandas, os recortes que cada
@@ -568,7 +579,7 @@ def load_data():
     hoje — o Greenhouse não tem data em nenhuma view."""
     from google.cloud import bigquery
 
-    client = bigquery.Client(project=PROJETO_BQ)
+    client = bigquery.Client(project=PROJETO_BQ, credentials=_credenciais_bq())
 
     def _ler(view):
         return client.query(f"SELECT * FROM `{PROJETO_BQ}.{DATASET_BQ}.{view}`").to_dataframe()
@@ -682,13 +693,37 @@ try:
     (farol_df, pipe_df, pipe_nivel_df, su_ofertas_df, su_banco_df,
      parados_df, MES_SNAPSHOT) = load_data()
 except Exception as e:  # noqa: BLE001 — qualquer falha de BigQuery/credencial
-    st.error(
-        "Não consegui ler as views do BigQuery "
-        f"(`{PROJETO_BQ}.{DATASET_BQ}.vw_farol_base` e `vw_farol_demanda`).\n\n"
-        "Confira se você tem credencial de aplicação configurada "
-        "(`gcloud auth application-default login`) e acesso de leitura ao dataset.\n\n"
-        f"Detalhe: {e}"
+    _detalhe = str(e)
+    # o erro de metadata server é o jeito do google-auth dizer "não achei
+    # credencial nenhuma": ele tenta o último recurso, que só existe dentro
+    # do GCP, e o timeout vaza como se fosse problema de rede
+    _sem_credencial = (
+        "metadata.google.internal" in _detalhe
+        or "could not automatically determine credentials" in _detalhe.lower()
+        or "default credentials" in _detalhe.lower()
     )
+    if _sem_credencial:
+        st.error(
+            "**Não há credencial do Google configurada nesta máquina.**\n\n"
+            "O erro de *metadata server* abaixo é o google-auth tentando o último "
+            "recurso, que só existe dentro do GCP — não é problema de rede.\n\n"
+            "Duas formas de resolver, qualquer uma serve:\n\n"
+            "1. **Na sua máquina:** `gcloud auth application-default login` "
+            "(precisa do Google Cloud SDK instalado).\n"
+            "2. **Sem gcloud, ou para publicar o app:** peça uma service account "
+            "com leitura no dataset e cole o JSON dela em "
+            "`.streamlit/secrets.toml`, sob `[gcp_service_account]` — o modelo "
+            "está em `.streamlit/secrets.toml.example`.\n\n"
+            f"Detalhe técnico: {e}"
+        )
+    else:
+        st.error(
+            "Credencial encontrada, mas não consegui ler as views "
+            f"`{PROJETO_BQ}.{DATASET_BQ}.vw_farol_base` e `vw_farol_demanda`.\n\n"
+            "Normalmente é falta de permissão de leitura no dataset, ou as views "
+            "ainda não foram criadas (ver a pasta `sql/`).\n\n"
+            f"Detalhe: {e}"
+        )
     st.stop()
 
 # Dois eixos de tempo. MESES vem da DEMANDA (forecast); o pipe é sempre a
@@ -696,6 +731,22 @@ except Exception as e:  # noqa: BLE001 — qualquer falha de BigQuery/credencial
 MES_LABELS = farol_df.drop_duplicates("mes").set_index("mes")["mes_label"].to_dict()
 MES_LABELS.setdefault(MES_SNAPSHOT, _rotulo_mes(MES_SNAPSHOT))
 MESES = sorted(m for m in MES_LABELS if m in set(farol_df["mes"]))
+
+# Aviso de escopo calculado do próprio dado, para não envelhecer: diz de
+# quando é a foto do pipe, até onde vai o forecast, e quais chapters têm
+# pipe mas não têm demanda cadastrada (esses não têm farol).
+_sem_demanda = sorted(set(pipe_df["chapter"].dropna()) - set(farol_df["chapter"].dropna()))
+_aviso = (
+    f"Dados oficiais do BigQuery. Pipe: foto de <b>{MES_LABELS[MES_SNAPSHOT]}</b> — nenhuma "
+    "view do Greenhouse tem data, então o funil não tem histórico. Demanda: forecast de "
+    f"<b>{MES_LABELS[MESES[0]]}</b> a <b>{MES_LABELS[MESES[-1]]}</b>."
+)
+if _sem_demanda:
+    _aviso += (
+        f" Sem demanda cadastrada no Artefactory: <b>{', '.join(_sem_demanda)}</b> — "
+        "esses chapters aparecem no funil, mas não têm farol."
+    )
+render_note(_aviso, variant="neutral")
 
 
 def gap_trend(chapter: str, senioridade: str) -> list:
