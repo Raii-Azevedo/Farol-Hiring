@@ -30,7 +30,8 @@
 -- Dados: só das 7 views oficiais. O de-para de etapa e de carreira está
 -- inline como CTE justamente para a view ser autocontida.
 --
--- Pendências marcadas com CONFIRMAR: ver passo1_descoberta.sql #2 e #3.
+-- Descobertas #2 (separador) e #3 (domínios de status) já confirmadas
+-- contra o dado em out/2026; o que ainda falta está marcado CONFIRMAR.
 -- =====================================================================
 
 CREATE OR REPLACE VIEW `br-in-dataplatform.greenhouse_dev.vw_farol_base` AS
@@ -132,14 +133,15 @@ conversao_etapa AS (
   -- Conversão é ARESTA (etapa anterior -> destino), tempo é NÓ. A
   -- convenção é pendurar a conversão na etapa DESTINO ("% que chegou da
   -- etapa anterior"), por isso o lado direito do split.
-  -- CONFIRMAR (descoberta #2): se o separador não for '->', isso desalinha
-  -- uma etapa EM SILÊNCIO. Rodar o QA 3 no fim do arquivo.
-  -- CONFIRMAR: se conversion_rate já vier 0-100, tirar o '* 100'.
+  -- O separador real é '-->' (descoberta #2, out/2026). Se mudar, isso
+  -- desalinha uma etapa EM SILÊNCIO. Rodar o QA 3 no fim do arquivo.
+  -- conversion_rate vem como fração (média ~0,86), mas há valores > 1
+  -- (máx. 15) — CONFIRMAR com o time de Dados o que significam.
   SELECT TRIM(c.job_name) AS job_name, e.etapa,
          AVG(c.conversion_rate) * 100 AS conversao_pct
   FROM `br-in-dataplatform.greenhouse_dev.greenhouse_v_stage_conversion_by_job` c
   JOIN etapa_depara e
-    ON e.stage_name = TRIM(SPLIT(c.job_stage_conversion_names, '->')[SAFE_OFFSET(1)])
+    ON e.stage_name = TRIM(SPLIT(c.job_stage_conversion_names, '-->')[SAFE_OFFSET(1)])
    AND e.tipo_etapa = 'funil'
   GROUP BY 1, 2
 ),
@@ -206,11 +208,12 @@ su_vaga AS (
   SELECT
     TRIM(c.job_name) AS job_name,
     SUM(c.number_of_applications) AS candidaturas,
-    -- CONFIRMAR (descoberta #3): valores reais de offer_status
+    -- offer_status real: 'N/A' (texto) para quem não recebeu oferta
     SUM(IF(LOWER(CAST(c.offer_status AS STRING)) LIKE '%accept%'
         OR LOWER(CAST(c.offer_status AS STRING)) LIKE '%aceit%',
         c.number_of_applications, 0)) AS aceites,
-    SUM(IF(c.offer_status IS NULL, 0, c.number_of_applications)) AS ofertas,
+    SUM(IF(COALESCE(UPPER(CAST(c.offer_status AS STRING)), 'N/A') = 'N/A',
+        0, c.number_of_applications)) AS ofertas,
     MAX(t.days_in_see_you_soon) AS dias_no_banco
   FROM `br-in-dataplatform.greenhouse_dev.greenhouse_v_see_you_soon_conversion` c
   LEFT JOIN `br-in-dataplatform.greenhouse_dev.greenhouse_v_see_you_soon_average_time_by_job` t
@@ -238,20 +241,27 @@ SELECT
   v.senioridade,
   a.stage_name                                AS etapa_origem,
   -- contratado não é etapa no Greenhouse, é status — mas o funil precisa
-  -- da última linha, então entra aqui
-  CASE WHEN LOWER(a.application_status) = 'hired' THEN 'Contratação'  -- CONFIRMAR #3
+  -- da última linha, então entra aqui. O stage_name do contratado vem
+  -- vazio, então o tipo_etapa também tem que ser forçado: sem isso ele
+  -- cai em 'sem mapeamento' e o app, que só lê 'funil', zera Contratação.
+  CASE WHEN LOWER(a.application_status) = 'hired' THEN 'Contratação'
        ELSE e.etapa END                       AS etapa,
   CASE WHEN LOWER(a.application_status) = 'hired' THEN 9
        ELSE e.ordem_etapa END                 AS ordem_etapa,
-  COALESCE(e.tipo_etapa, 'sem mapeamento')    AS tipo_etapa,
+  CASE WHEN LOWER(a.application_status) = 'hired' THEN 'funil'
+       ELSE COALESCE(e.tipo_etapa, 'sem mapeamento') END AS tipo_etapa,
   a.application_status,
   a.offer_status,
 
   -- ---- flags: 0/1 por candidatura. PODE SOMAR. -------------------
-  -- CONFIRMAR (descoberta #3) todos os valores abaixo
-  IF(LOWER(a.application_status) IN ('active','ativo','ativa'), 1, 0)      AS flag_ativo,
+  -- Domínios reais (descoberta #3, out/2026):
+  --   application_status: in_process | rejected | hired
+  --   offer_status:       N/A | Accepted | Rejected | Created | Deprecated
+  -- 'N/A' é texto, não NULL: tratar como "sem oferta", senão toda
+  -- candidatura conta como oferta.
+  IF(LOWER(a.application_status) = 'in_process', 1, 0)                    AS flag_ativo,
   IF(LOWER(a.application_status) = 'hired', 1, 0)                          AS flag_contratado,
-  IF(a.offer_status IS NOT NULL, 1, 0)                                     AS flag_oferta,
+  IF(COALESCE(UPPER(CAST(a.offer_status AS STRING)), 'N/A') != 'N/A', 1, 0) AS flag_oferta,
   IF(LOWER(CAST(a.offer_status AS STRING)) LIKE '%accept%'
      OR LOWER(CAST(a.offer_status AS STRING)) LIKE '%aceit%', 1, 0)        AS flag_aceite,
   -- "pipe qualificado": já passou da triagem e do case
@@ -295,7 +305,7 @@ SELECT
   -- SOMAR isto por chapter/senioridade = oferta ajustada por conversão.
   -- Para ajustar também por TEMPO, filtrar antes por dias_ate_contratacao
   -- <= horizonte do farol (~45 dias).
-  ROUND(IF(LOWER(a.application_status) IN ('active','ativo','ativa'),
+  ROUND(IF(LOWER(a.application_status) = 'in_process',
            pr.prob_contratacao, 0), 3)        AS contrib_oferta_ajustada,
 
   -- ---- métricas da vaga. MÉDIA sim; SOMA só após ANY_VALUE. ------
@@ -333,13 +343,14 @@ WHERE tipo_etapa = 'sem mapeamento'
 GROUP BY 1, 2 ORDER BY candidaturas DESC;
 
 -- 3) O MAIS IMPORTANTE: destino da conversão que não casou. Esperado:
---    zero. Se vier linha, o separador do job_stage_conversion_names não é
---    '->' e o gráfico de conversão fica errado sem dar erro.
+--    só os 'Interview #n' do pipeline default. Se vier outra coisa, o
+--    separador do job_stage_conversion_names não é mais '-->' e o
+--    gráfico de conversão fica errado sem dar erro.
 SELECT DISTINCT
   c.job_stage_conversion_names,
-  TRIM(SPLIT(c.job_stage_conversion_names, '->')[SAFE_OFFSET(1)]) AS destino_extraido
+  TRIM(SPLIT(c.job_stage_conversion_names, '-->')[SAFE_OFFSET(1)]) AS destino_extraido
 FROM `br-in-dataplatform.greenhouse_dev.greenhouse_v_stage_conversion_by_job` c
-WHERE TRIM(SPLIT(c.job_stage_conversion_names, '->')[SAFE_OFFSET(1)]) NOT IN (
+WHERE TRIM(SPLIT(c.job_stage_conversion_names, '-->')[SAFE_OFFSET(1)]) NOT IN (
   'Avaliação de currículo','Curriculo selecionado','Application Review',
   'Envio do Case Escrito','Avaliação case escrito','Entrevista Fit',
   'Entrevista Técnica 1','Entrevista Técnica 2','Conversa com André',
@@ -352,7 +363,8 @@ FROM `br-in-dataplatform.greenhouse_dev.vw_farol_base`
 WHERE tipo_etapa = 'funil'
 GROUP BY 1, 2 ORDER BY ordem_etapa;
 
--- 5) Os flags batem? Esperado: aceites <= ofertas, contratados <= aceites.
+-- 5) Os flags batem? Esperado: aceites <= ofertas, contratados <= aceites,
+--    e ativos > 0 (se zerar, o domínio de application_status mudou).
 SELECT SUM(flag_oferta) AS ofertas, SUM(flag_aceite) AS aceites,
        SUM(flag_contratado) AS contratados, SUM(flag_ativo) AS ativos,
        COUNT(*) AS candidaturas

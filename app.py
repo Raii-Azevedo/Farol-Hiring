@@ -607,6 +607,21 @@ def load_data():
     )
     pipe_nivel["mes"], pipe_nivel["mes_label"] = mes_snap, label_snap
 
+    # ---- taxas de oferta e conversão ------------------------------------
+    # Saem dos flags, não da contagem por etapa: "Oferta" no funil é quem
+    # está lá HOJE, e "Contratação" é todo mundo já contratado. Dividir um
+    # pelo outro mistura estoque com histórico e passa de 100%.
+    taxas = (
+        base[base["chapter"].notna()]
+        .groupby("chapter", as_index=False)
+        .agg(
+            candidaturas=("application_id", "count"),
+            ofertas=("flag_oferta", "sum"),
+            aceites=("flag_aceite", "sum"),
+            contratados=("flag_contratado", "sum"),
+        )
+    )
+
     # ---- candidatos parados --------------------------------------------
     # dias_na_etapa aqui é o tempo no PIPE INTEIRO, e meta_sla_dias é o
     # tempo esperado até esta etapa — as views oficiais não têm tempo por
@@ -663,12 +678,12 @@ def load_data():
     farol["gap_pct"] = [c[1] for c in calculado]
     farol["mes_label"] = farol["mes"].map(_rotulo_mes)
 
-    return farol, pipe, pipe_nivel, su_ofertas, su_banco, parados, mes_snap
+    return farol, pipe, pipe_nivel, su_ofertas, su_banco, parados, taxas, mes_snap
 
 
 try:
     (farol_df, pipe_df, pipe_nivel_df, su_ofertas_df, su_banco_df,
-     parados_df, MES_SNAPSHOT) = load_data()
+     parados_df, taxas_df, MES_SNAPSHOT) = load_data()
 except Exception as e:  # noqa: BLE001 — qualquer falha de BigQuery/credencial
     _detalhe = str(e)
     # o erro de metadata server é o jeito do google-auth dizer "não achei
@@ -800,15 +815,12 @@ def pipe_qualificado(mes: str, chapter: str | None = None) -> int:
 
 
 def taxa_aceite_oferta(mes: str, chapter: str | None = None) -> float | None:
-    """% de ofertas enviadas que viraram contratação (Oferta -> Contratação)."""
-    df = pipe_df[pipe_df["mes"] == MES_SNAPSHOT]
-    if chapter:
-        df = df[df["chapter"] == chapter]
-    ofertas = df[df["etapa"] == "Oferta"]["candidatos"].sum()
-    contratacoes = df[df["etapa"] == "Contratação"]["candidatos"].sum()
+    """% de ofertas enviadas que foram aceitas (flag_aceite / flag_oferta)."""
+    df = taxas_df if not chapter else taxas_df[taxas_df["chapter"] == chapter]
+    ofertas = df["ofertas"].sum()
     if not ofertas:
         return None
-    return contratacoes / ofertas * 100
+    return df["aceites"].sum() / ofertas * 100
 
 
 def tempo_medio_contratacao(mes: str) -> float | None:
@@ -826,14 +838,14 @@ def mes_anterior(mes: str) -> str | None:
 
 
 def conversao_total_pipe(mes: str) -> float | None:
-    """% do volume inicial de currículos que termina em contratação, somando
-    todos os chapters — a eficiência ponta a ponta do funil no mês."""
-    df = pipe_df[pipe_df["mes"] == MES_SNAPSHOT]
-    curriculos = df[df["etapa"] == "Avaliação de currículo"]["candidatos"].sum()
-    contratacoes = df[df["etapa"] == "Contratação"]["candidatos"].sum()
-    if not curriculos:
+    """% de todas as candidaturas (de qualquer status) que terminaram em
+    contratação, somando todos os chapters — a eficiência ponta a ponta do
+    funil. Numerador e denominador são o mesmo universo (o histórico
+    inteiro), não a foto de quem está na triagem hoje."""
+    candidaturas = taxas_df["candidaturas"].sum()
+    if not candidaturas:
         return None
-    return contratacoes / curriculos * 100
+    return taxas_df["contratados"].sum() / candidaturas * 100
 
 
 def taxa_aceite_sys(mes: str, chapter: str | None = None) -> float | None:
@@ -1436,7 +1448,7 @@ with tab_pipe:
             "Conversão total do pipe",
             f"{conversao_total:.1f}%" if conversao_total is not None else "—",
             _delta_pipe(conversao_total, conversao_ant, mes_ant2),
-            "Contratações / total de currículos recebidos, somando todos os chapters.",
+            "Contratações / total de candidaturas recebidas, somando todos os chapters.",
         ),
         (
             "Taxa de aceite de oferta (Geral)",
@@ -1509,7 +1521,7 @@ with tab_pipe:
         st.markdown(f"##### Conversão etapa a etapa — {chapter_sel2}")
         st.caption(
             "% de candidatos que avançam de uma etapa para a próxima — mostra onde a eficiência do processo é pior. "
-            "A última barra (Oferta → Contratação) é a taxa de aceite de oferta."
+            "A taxa de aceite de oferta do chapter aparece logo abaixo do gráfico."
         )
         conv = dfp_chapter.dropna(subset=["conversao_pct"])
         bar_colors = [PINK if et == "Contratação" else ARTEFACT_BLUE for et in conv["etapa"]]
