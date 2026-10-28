@@ -1,6 +1,6 @@
 """
 Farol de Hiring — protótipo Streamlit (branding Artefact, light/dark)
-Le farol_executivo.csv, funil_pipe.csv e propostas_recusadas.csv (mock) e
+Le as views vw_farol_base e vw_farol_demanda do BigQuery (dados reais) e
 reproduz as duas paginas definidas no discovery: Farol Executivo e Visao do Pipe.
 
 Rodar:
@@ -87,12 +87,20 @@ PALETTES = {
 }
 
 # nomes reais do pipe, conforme o deck "Projeto Farol de Contratacao" (jun/2026)
+# Nomes canônicos do funil REAL do Greenhouse. O de-para dos 19 nomes que
+# o Greenhouse usa de fato está em sql/passo2_seeds.sql (d_farol_etapa) — inclusive
+# as três variantes da conversa final e as duas etapas do case escrito,
+# que o protótipo não modelava antes.
+# "Contratação" aqui é etapa; no Greenhouse é status da candidatura.
 STAGES_ORDER = [
-    "Envio de Currículo", "Entrevista Fit", "Técnica 1", "Técnica 2",
-    "Conversa com André", "Oferta", "Contratação",
+    "Avaliação de currículo", "Envio do Case Escrito", "Avaliação case escrito",
+    "Entrevista Fit", "Entrevista Técnica 1", "Entrevista Técnica 2",
+    "Conversa Final", "Oferta", "Contratação",
 ]
 
-SENIORIDADE_ORDER = ["Junior", "Pleno", "Senior", "Staff"]
+# Níveis que dá para deduzir do job_name do Greenhouse. O Artefactory tem
+# 16 níveis; o de-para para estes três está na vw_farol_demanda.
+SENIORIDADE_ORDER = ["Estagiário", "Pleno", "Senior"]
 
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR
@@ -508,50 +516,186 @@ render_note(
     variant="neutral",
 )
 
+_MES_PT = {1: "Jan", 2: "Fev", 3: "Mar", 4: "Abr", 5: "Mai", 6: "Jun",
+           7: "Jul", 8: "Ago", 9: "Set", 10: "Out", 11: "Nov", 12: "Dez"}
+
+
+def _rotulo_mes(ym: str) -> str:
+    """'2026-11' -> 'Nov/2026'."""
+    ano, mes = str(ym)[:7].split("-")
+    return f"{_MES_PT[int(mes)]}/{ano}"
+
+
+def farol_status(demanda: float, oferta: float):
+    """Semáforo a partir do gap entre demanda líquida e oferta ajustada.
+
+    Demanda líquida NEGATIVA é um caso real: no mês corrente as
+    desalocações costumam superar os pedidos novos. Não dá para calcular
+    gap percentual em cima de denominador negativo (o sinal inverte e o
+    farol diria 'acelerar' justamente quando sobra gente), então esse
+    caso vira 'pausar' direto, sem percentual."""
+    if demanda is None or pd.isna(demanda):
+        return "sem_dado", None
+    if demanda == 0:
+        return "sem_dado", None
+    if demanda < 0:
+        return "pausar", None
+    gap_pct = round((demanda - oferta) / demanda * 100, 1)
+    if gap_pct > 20:
+        return "acelerar", gap_pct
+    if gap_pct >= -10:
+        return "manter", gap_pct
+    return "pausar", gap_pct
+
+
 # ---------------------------------------------------------------------------
 # Dados
 # ---------------------------------------------------------------------------
-@st.cache_data
+PROJETO_BQ = "br-in-dataplatform"
+DATASET_BQ = "greenhouse_dev"
+
+# Horizonte do farol: o "~1,5 mês" definido no discovery. Um candidato só
+# conta como oferta se a projeção disser que ele chega à contratação
+# dentro desse prazo.
+HORIZONTE_FAROL_DIAS = 45
+
+
+@st.cache_data(ttl=1800, show_spinner="Lendo as views do BigQuery…")
 def load_data():
-    farol = pd.read_csv(DATA_DIR / "farol_executivo.csv")
-    pipe = pd.read_csv(DATA_DIR / "funil_pipe.csv")
-    recusas_path = DATA_DIR / "propostas_recusadas.csv"
-    recusas = pd.read_csv(recusas_path) if recusas_path.exists() else pd.DataFrame(
-        columns=["data_recusa", "chapter", "senioridade", "motivo_recusa", "dias_para_recusa"]
+    """Lê as duas views oficiais e deriva, em pandas, os recortes que cada
+    tela usa. As views são duas porque são dois grãos e dois eixos de
+    tempo: a demanda é forecast mensal (até 2027-12) e o pipe é foto de
+    hoje — o Greenhouse não tem data em nenhuma view."""
+    from google.cloud import bigquery
+
+    client = bigquery.Client(project=PROJETO_BQ)
+
+    def _ler(view):
+        return client.query(f"SELECT * FROM `{PROJETO_BQ}.{DATASET_BQ}.{view}`").to_dataframe()
+
+    base = _ler("vw_farol_base")
+    demanda = _ler("vw_farol_demanda")
+
+    mes_snap = str(pd.to_datetime(base["snapshot_date"].iloc[0]).strftime("%Y-%m"))
+    label_snap = _rotulo_mes(mes_snap)
+
+    # "Contratação" não é etapa viva: quem está lá entra pelo flag_contratado
+    base = base.copy()
+    base["conta_funil"] = base["flag_ativo"].where(
+        ~base["etapa"].eq("Contratação"), base["flag_contratado"]
     )
-    pipe_nivel_path = DATA_DIR / "funil_pipe_nivel.csv"
-    pipe_nivel = pd.read_csv(pipe_nivel_path) if pipe_nivel_path.exists() else pd.DataFrame(
-        columns=["mes", "mes_label", "chapter", "senioridade", "etapa", "ordem_etapa", "candidatos"]
+    funil = base[base["tipo_etapa"].eq("funil") & base["chapter"].notna()]
+
+    # ---- funil por chapter × etapa -------------------------------------
+    # a média de conversão e de tempo sai PONDERADA porque o grão da view é
+    # a candidatura: cada linha já é um candidato daquela vaga/etapa
+    pipe = (
+        funil.groupby(["chapter", "etapa", "ordem_etapa"], as_index=False)
+        .agg(
+            candidatos=("conta_funil", "sum"),
+            conversao_pct=("conversao_etapa_pct", "mean"),
+            tempo_medio_dias=("tempo_medio_etapa", "mean"),
+            meta_sla_dias=("meta_sla_etapa", "max"),
+        )
     )
-    su_ofertas_path = DATA_DIR / "su_ofertas.csv"
-    su_ofertas = pd.read_csv(su_ofertas_path) if su_ofertas_path.exists() else pd.DataFrame(
-        columns=["mes", "mes_label", "chapter", "ofertas_sys", "aceites_sys"]
+    pipe.loc[pipe["etapa"].eq("Contratação"), ["tempo_medio_dias", "meta_sla_dias"]] = None
+    pipe["mes"], pipe["mes_label"] = mes_snap, label_snap
+    pipe["conversao_pct"] = pipe["conversao_pct"].round(1)
+    pipe["tempo_medio_dias"] = pipe["tempo_medio_dias"].round(1)
+    pipe["excesso_dias"] = (pipe["tempo_medio_dias"] - pipe["meta_sla_dias"]).round(1)
+
+    def _status_sla(excesso):
+        if pd.isna(excesso):
+            return None
+        return "critico" if excesso > 5 else ("atencao" if excesso > 0 else "ok")
+
+    pipe["status_sla"] = pipe["excesso_dias"].map(_status_sla)
+
+    # ---- volume por senioridade ----------------------------------------
+    pipe_nivel = (
+        funil[funil["senioridade"].notna()]
+        .groupby(["chapter", "senioridade", "etapa", "ordem_etapa"], as_index=False)
+        .agg(candidatos=("conta_funil", "sum"))
     )
-    su_banco_path = DATA_DIR / "su_banco_talentos.csv"
-    su_banco = pd.read_csv(su_banco_path) if su_banco_path.exists() else pd.DataFrame(
-        columns=["candidato", "chapter", "senioridade", "dias_no_banco", "probabilidade_reativacao_pct",
-                 "urgencia_gap_chapter_pct", "score_priorizacao", "status"]
+    pipe_nivel["mes"], pipe_nivel["mes_label"] = mes_snap, label_snap
+
+    # ---- candidatos parados --------------------------------------------
+    # dias_na_etapa aqui é o tempo no PIPE INTEIRO, e meta_sla_dias é o
+    # tempo esperado até esta etapa — as views oficiais não têm tempo por
+    # etapa por candidato. É proxy, e as telas dizem isso.
+    parados = base[
+        base["flag_ativo"].eq(1)
+        & base["tipo_etapa"].eq("funil")
+        & base["status_parado"].isin(["atencao", "critico"])
+        & base["chapter"].notna()
+    ].copy()
+    parados = parados.rename(
+        columns={
+            "status_parado": "status",
+            "total_days_in_pipe": "dias_na_etapa",
+            "dias_esperados_ate_etapa": "meta_sla_dias",
+        }
     )
-    parados_path = DATA_DIR / "candidatos_parados.csv"
-    parados = pd.read_csv(parados_path) if parados_path.exists() else pd.DataFrame(
-        columns=["mes", "mes_label", "chapter", "vaga", "squad", "senioridade", "etapa",
-                 "ordem_etapa", "candidato", "dias_na_etapa", "meta_sla_dias", "status"]
+    parados["mes"], parados["mes_label"] = mes_snap, label_snap
+
+    # ---- See You Soon ---------------------------------------------------
+    # su_*_vaga vem REPETIDO em cada candidatura da vaga: dedupe antes de somar
+    por_vaga = base.drop_duplicates("job_id")
+    su_ofertas = (
+        por_vaga[por_vaga["chapter"].notna()]
+        .groupby("chapter", as_index=False)
+        .agg(ofertas_sys=("su_ofertas_vaga", "sum"), aceites_sys=("su_aceites_vaga", "sum"))
     )
-    return farol, pipe, recusas, pipe_nivel, su_ofertas, su_banco, parados
+    su_ofertas["mes"], su_ofertas["mes_label"] = mes_snap, label_snap
+
+    su_banco = base[base["flag_see_you_soon"].eq(1)][
+        ["candidato", "chapter", "senioridade", "su_dias_no_banco_vaga"]
+    ].copy()
+    su_banco = su_banco.rename(columns={"su_dias_no_banco_vaga": "dias_no_banco"})
+    su_banco["status"] = "aguardando"
+
+    # ---- farol: demanda líquida × oferta ajustada -----------------------
+    demanda = demanda.rename(columns={"demanda_liquida_fte": "demanda_liquida"})
+    oferta = (
+        base[
+            base["flag_ativo"].eq(1)
+            & base["dias_ate_contratacao"].le(HORIZONTE_FAROL_DIAS)
+            & base["chapter"].notna()
+        ]
+        .groupby(["chapter", "senioridade"], as_index=False)
+        .agg(oferta_ajustada=("contrib_oferta_ajustada", "sum"))
+    )
+    farol = demanda.merge(oferta, on=["chapter", "senioridade"], how="left")
+    farol["oferta_ajustada"] = farol["oferta_ajustada"].fillna(0.0).round(1)
+    farol["gap"] = (farol["demanda_liquida"] - farol["oferta_ajustada"]).round(1)
+    calculado = farol.apply(
+        lambda r: farol_status(r["demanda_liquida"], r["oferta_ajustada"]), axis=1
+    )
+    farol["farol_status"] = [c[0] for c in calculado]
+    farol["gap_pct"] = [c[1] for c in calculado]
+    farol["mes_label"] = farol["mes"].map(_rotulo_mes)
+
+    return farol, pipe, pipe_nivel, su_ofertas, su_banco, parados, mes_snap
 
 
 try:
-    (farol_df, pipe_df, recusas_df, pipe_nivel_df, su_ofertas_df, su_banco_df,
-     parados_df) = load_data()
-except FileNotFoundError as e:
+    (farol_df, pipe_df, pipe_nivel_df, su_ofertas_df, su_banco_df,
+     parados_df, MES_SNAPSHOT) = load_data()
+except Exception as e:  # noqa: BLE001 — qualquer falha de BigQuery/credencial
     st.error(
-        "Não encontrei farol_executivo.csv e/ou funil_pipe.csv na mesma pasta do app.py. "
+        "Não consegui ler as views do BigQuery "
+        f"(`{PROJETO_BQ}.{DATASET_BQ}.vw_farol_base` e `vw_farol_demanda`).\n\n"
+        "Confira se você tem credencial de aplicação configurada "
+        "(`gcloud auth application-default login`) e acesso de leitura ao dataset.\n\n"
         f"Detalhe: {e}"
     )
     st.stop()
 
+# Dois eixos de tempo. MESES vem da DEMANDA (forecast); o pipe é sempre a
+# foto de hoje (MES_SNAPSHOT), porque nenhuma view do Greenhouse tem data.
 MES_LABELS = farol_df.drop_duplicates("mes").set_index("mes")["mes_label"].to_dict()
-MESES = sorted(MES_LABELS.keys())
+MES_LABELS.setdefault(MES_SNAPSHOT, _rotulo_mes(MES_SNAPSHOT))
+MESES = sorted(m for m in MES_LABELS if m in set(farol_df["mes"]))
 
 
 def gap_trend(chapter: str, senioridade: str) -> list:
@@ -562,17 +706,6 @@ def gap_trend(chapter: str, senioridade: str) -> list:
 def pipe_trend(chapter: str, etapa: str, col: str = "tempo_medio_dias") -> list:
     hist = pipe_df[(pipe_df["chapter"] == chapter) & (pipe_df["etapa"] == etapa)].sort_values("mes")
     return hist[col].tolist()
-
-
-def farol_status(demanda: float, oferta: float):
-    if demanda == 0:
-        return "sem_dado", None
-    gap_pct = round((demanda - oferta) / demanda * 100, 1)
-    if gap_pct > 20:
-        return "acelerar", gap_pct
-    if gap_pct >= -10:
-        return "manter", gap_pct
-    return "pausar", gap_pct
 
 
 def farol_insight(status: str, gap_pct, demanda: float, oferta: float) -> str:
@@ -599,14 +732,23 @@ def farol_insight(status: str, gap_pct, demanda: float, oferta: float) -> str:
 # etapas do pipe que já passaram da triagem inicial mas ainda não viraram
 # contratação — "pipe qualificado" no sentido usado no mock de referência
 # (a partir da Entrevista Fit, até a decisão final de Oferta).
-QUALIFIED_STAGES = ["Entrevista Fit", "Técnica 1", "Técnica 2", "Conversa com André", "Oferta"]
+# Deliberadamente NÃO inclui as duas etapas do case: "qualificado" aqui é
+# quem já passou da triagem E do case, que é o estoque com chance real de
+# cobrir demanda no horizonte do farol. Se o STF quiser contar o case,
+# acrescentar as duas etapas aqui.
+QUALIFIED_STAGES = [
+    "Entrevista Fit", "Entrevista Técnica 1", "Entrevista Técnica 2", "Conversa Final", "Oferta",
+]
 
 
+# NOTA: as funções abaixo recebem `mes` por compatibilidade com as telas,
+# mas IGNORAM o valor e leem sempre MES_SNAPSHOT. O pipe do Greenhouse não
+# tem data: é foto de hoje. Só a demanda (farol_df) varia por mês.
 def pipe_qualificado(mes: str, chapter: str | None = None) -> int:
     """Quantos candidatos já passaram do currículo e ainda estão vivos no processo
     (Entrevista Fit até Oferta) — o estoque qualificado disponível para cobrir
     a demanda deste mês, sem contar quem ainda está só na triagem de currículo."""
-    df = pipe_df[(pipe_df["mes"] == mes) & (pipe_df["etapa"].isin(QUALIFIED_STAGES))]
+    df = pipe_df[(pipe_df["mes"] == MES_SNAPSHOT) & (pipe_df["etapa"].isin(QUALIFIED_STAGES))]
     if chapter:
         df = df[df["chapter"] == chapter]
     return int(df["candidatos"].sum())
@@ -614,7 +756,7 @@ def pipe_qualificado(mes: str, chapter: str | None = None) -> int:
 
 def taxa_aceite_oferta(mes: str, chapter: str | None = None) -> float | None:
     """% de ofertas enviadas que viraram contratação (Oferta -> Contratação)."""
-    df = pipe_df[pipe_df["mes"] == mes]
+    df = pipe_df[pipe_df["mes"] == MES_SNAPSHOT]
     if chapter:
         df = df[df["chapter"] == chapter]
     ofertas = df[df["etapa"] == "Oferta"]["candidatos"].sum()
@@ -627,7 +769,7 @@ def taxa_aceite_oferta(mes: str, chapter: str | None = None) -> float | None:
 def tempo_medio_contratacao(mes: str) -> float | None:
     """Soma do tempo médio (dias) de cada etapa do funil, com a média entre
     chapters em cada etapa — leitura ponta a ponta de currículo até contratação."""
-    df = pipe_df[(pipe_df["mes"] == mes) & (pipe_df["tempo_medio_dias"].notna())]
+    df = pipe_df[(pipe_df["mes"] == MES_SNAPSHOT) & (pipe_df["tempo_medio_dias"].notna())]
     if df.empty:
         return None
     return df.groupby("etapa")["tempo_medio_dias"].mean().sum()
@@ -641,8 +783,8 @@ def mes_anterior(mes: str) -> str | None:
 def conversao_total_pipe(mes: str) -> float | None:
     """% do volume inicial de currículos que termina em contratação, somando
     todos os chapters — a eficiência ponta a ponta do funil no mês."""
-    df = pipe_df[pipe_df["mes"] == mes]
-    curriculos = df[df["etapa"] == "Envio de Currículo"]["candidatos"].sum()
+    df = pipe_df[pipe_df["mes"] == MES_SNAPSHOT]
+    curriculos = df[df["etapa"] == "Avaliação de currículo"]["candidatos"].sum()
     contratacoes = df[df["etapa"] == "Contratação"]["candidatos"].sum()
     if not curriculos:
         return None
@@ -654,7 +796,7 @@ def taxa_aceite_sys(mes: str, chapter: str | None = None) -> float | None:
     contratação, neste mês (fonte: su_ofertas.csv)."""
     if su_ofertas_df.empty:
         return None
-    df = su_ofertas_df[su_ofertas_df["mes"] == mes]
+    df = su_ofertas_df[su_ofertas_df["mes"] == MES_SNAPSHOT]
     if chapter:
         df = df[df["chapter"] == chapter]
     ofertas = df["ofertas_sys"].sum()
@@ -792,7 +934,7 @@ def _clicked_category(event, axis: str = "y"):
 def show_conv_drilldown(etapa: str, mes: str) -> None:
     st.markdown(f"#### {etapa}")
     st.caption(f"% de candidatos que avançam nesta etapa, por chapter — {MES_LABELS[mes]}.")
-    df = pipe_df[(pipe_df["mes"] == mes) & (pipe_df["etapa"] == etapa)].dropna(subset=["conversao_pct"]).copy()
+    df = pipe_df[(pipe_df["mes"] == MES_SNAPSHOT) & (pipe_df["etapa"] == etapa)].dropna(subset=["conversao_pct"]).copy()
     if df.empty:
         render_note("Sem dado de conversão para esta etapa neste mês.", variant="neutral")
         return
@@ -812,7 +954,7 @@ def show_conv_drilldown(etapa: str, mes: str) -> None:
 def show_tempo_drilldown(etapa: str, mes: str) -> None:
     st.markdown(f"#### {etapa}")
     st.caption(f"Tempo médio (dias corridos) nesta etapa, por chapter — {MES_LABELS[mes]}.")
-    df = pipe_df[(pipe_df["mes"] == mes) & (pipe_df["etapa"] == etapa)].dropna(subset=["tempo_medio_dias"]).copy()
+    df = pipe_df[(pipe_df["mes"] == MES_SNAPSHOT) & (pipe_df["etapa"] == etapa)].dropna(subset=["tempo_medio_dias"]).copy()
     if df.empty:
         render_note("Sem dado de tempo para esta etapa neste mês.", variant="neutral")
         return
@@ -833,7 +975,7 @@ def show_tempo_drilldown(etapa: str, mes: str) -> None:
 
 def _parados_no_mes(mes: str, etapa: str = None, status_key: str = None, vaga: str = None):
     """Recorte do candidatos_parados.csv (quem está parado em cada etapa)."""
-    df = parados_df[parados_df["mes"] == mes]
+    df = parados_df[parados_df["mes"] == MES_SNAPSHOT]
     if etapa is not None:
         df = df[df["etapa"] == etapa]
     if status_key is not None:
@@ -863,12 +1005,12 @@ def show_parados_vagas(etapa: str, status_key: str, mes: str) -> None:
         f"{MES_LABELS[mes]}. Clique em uma vaga para ver quem são."
     )
     por_vaga = (
-        df.groupby(["vaga", "squad"], as_index=False)
+        df.groupby(["vaga"], as_index=False)
         .agg(qtd=("candidato", "size"), pior=("dias_na_etapa", "max"))
         .sort_values("qtd", ascending=False)
     )
     for i, row in enumerate(por_vaga.itertuples(index=False)):
-        rotulo = f"{row.vaga}  ·  {row.squad}  —  {row.qtd} candidato(s), até {row.pior}d parados"
+        rotulo = f"{row.vaga}  —  {row.qtd} candidato(s), até {row.pior:.0f}d no pipe"
         if st.button(rotulo, key=f"parados_vaga_{status_key}_{i}", use_container_width=True):
             _abrir_parados(etapa, status_key, row.vaga)
             st.rerun()
@@ -893,9 +1035,9 @@ def show_parados_candidatos(etapa: str, status_key: str, vaga: str, mes: str) ->
             f'<div class="cand-item">'
             f'<div class="cand-left"><div class="cand-avatar">{iniciais}</div>'
             f'<div><div class="cand-name">{row.candidato}</div>'
-            f'<div class="cand-role">{row.chapter} · {row.senioridade} · {row.squad}</div></div></div>'
-            f'<div class="cand-right"><div class="cand-days" style="color:{cor}">{row.dias_na_etapa}d</div>'
-            f'<div class="cand-meta">meta {row.meta_sla_dias}d</div></div>'
+            f'<div class="cand-role">{row.chapter} · {row.senioridade}</div></div></div>'
+            f'<div class="cand-right"><div class="cand-days" style="color:{cor}">{row.dias_na_etapa:.0f}d</div>'
+            f'<div class="cand-meta">esperado {row.meta_sla_dias:.0f}d</div></div>'
             f"</div>"
         )
     st.markdown("".join(itens), unsafe_allow_html=True)
@@ -939,10 +1081,12 @@ with tab_exec:
     tempo_total = tempo_medio_contratacao(mes_sel0)
     aceite_total = taxa_aceite_oferta(mes_sel0)
 
+    # só a demanda tem série mensal; os KPIs de pipe são foto de hoje e
+    # portanto não têm "mês anterior" para comparar
     demanda_ant = float(farol_df[farol_df["mes"] == mes_ant0]["demanda_liquida"].sum()) if mes_ant0 else None
-    pipe_qual_ant = sum(pipe_qualificado(mes_ant0, ch) for ch in farol_chapters) if mes_ant0 else None
-    tempo_ant = tempo_medio_contratacao(mes_ant0) if mes_ant0 else None
-    aceite_ant = taxa_aceite_oferta(mes_ant0) if mes_ant0 else None
+    pipe_qual_ant = None
+    tempo_ant = None
+    aceite_ant = None
 
     def _delta_html(atual, anterior, melhora_se_sobe, fmt, suffix=""):
         if atual is None or anterior is None or mes_ant0 is None:
@@ -1214,19 +1358,18 @@ with tab_pipe:
         "dados do funil de contratação no Greenhouse."
     )
 
-    col_m, col_c = st.columns([1, 1])
-    with col_m:
-        mes_sel2 = st.selectbox(
-            "Mês de referência", MESES, index=len(MESES) - 1, format_func=lambda m: MES_LABELS[m], key="mes_pipe"
-        )
-    with col_c:
-        chapters_pipe = sorted(pipe_df["chapter"].unique())
-        chapter_sel2 = st.selectbox("Chapter (funil e conversão)", chapters_pipe, key="chapter_pipe")
+    # Sem seletor de mês aqui de propósito: nenhuma view do Greenhouse tem
+    # data, então o funil é sempre a foto de hoje. O seletor de mês existe
+    # só nas abas que leem a demanda (Visão Gerencial e Farol Executivo).
+    mes_sel2 = MES_SNAPSHOT
+    chapters_pipe = sorted(pipe_df["chapter"].unique())
+    chapter_sel2 = st.selectbox("Chapter (funil e conversão)", chapters_pipe, key="chapter_pipe")
+    st.caption(f"📷 Foto do pipe em **{MES_LABELS[MES_SNAPSHOT]}** — o Greenhouse não guarda histórico por etapa.")
 
     dfp_mes = pipe_df[pipe_df["mes"] == mes_sel2]
     dfp_chapter = dfp_mes[dfp_mes["chapter"] == chapter_sel2].sort_values("ordem_etapa")
 
-    mes_ant2 = mes_anterior(mes_sel2)
+    mes_ant2 = None  # foto de hoje: não há mês anterior de pipe para comparar
     conversao_total = conversao_total_pipe(mes_sel2)
     aceite_geral_mes = taxa_aceite_oferta(mes_sel2)
     aceite_sys_mes = taxa_aceite_sys(mes_sel2)
@@ -1283,7 +1426,6 @@ with tab_pipe:
 
     sla_calc = dfp_mes.dropna(subset=["excesso_dias"])
     n_crit_pipe = int((sla_calc["status_sla"] == "critico").sum())
-    recusas_calc = recusas_df[recusas_df["data_recusa"].str.slice(0, 7) == mes_sel2] if not recusas_df.empty else recusas_df
     partes_pipe = []
     if n_crit_pipe:
         top_gargalo_calc = sla_calc.sort_values("excesso_dias", ascending=False).iloc[0]
@@ -1293,8 +1435,6 @@ with tab_pipe:
         )
     else:
         partes_pipe.append("Nenhuma etapa em SLA crítico neste mês")
-    if not recusas_calc.empty:
-        partes_pipe.append(f"<b>{len(recusas_calc)} proposta(s) recusada(s)</b> registrada(s)")
     render_finding(f"Em <b>{MES_LABELS[mes_sel2]}</b>: " + " · ".join(partes_pipe) + ".")
 
     col_a, col_b = st.columns(2)
@@ -1669,64 +1809,10 @@ with tab_pipe:
             variant="critical",
         )
 
-    st.divider()
-    st.markdown("##### Propostas recusadas")
-    st.caption(
-        "Rastreabilidade de ofertas recusadas por motivo — não só a taxa de aceite agregada, "
-        "mas onde e por que o pipe está perdendo gente na reta final."
-    )
-    if recusas_df.empty:
-        render_note("Nenhuma proposta recusada registrada na fonte de dados ainda.", variant="neutral")
-    else:
-        recusas_mes = recusas_df[recusas_df["data_recusa"].str.slice(0, 7) == mes_sel2]
-        if recusas_mes.empty:
-            st.caption(f"Nenhuma proposta recusada registrada em {MES_LABELS[mes_sel2]}.")
-        else:
-            col_r1, col_r2 = st.columns([1, 1])
-            with col_r1:
-                por_motivo = (
-                    recusas_mes.groupby("motivo_recusa", as_index=False)
-                    .size()
-                    .rename(columns={"size": "qtd"})
-                    .sort_values("qtd", ascending=True)
-                )
-                fig_recusa = go.Figure(
-                    go.Bar(
-                        y=por_motivo["motivo_recusa"],
-                        x=por_motivo["qtd"],
-                        orientation="h",
-                        marker_color=PINK,
-                        hovertemplate="<b>%{y}</b><br>%{x} recusa(s) neste mês<extra></extra>",
-                    )
-                )
-                fig_recusa.update_layout(
-                    height=max(180, 40 * len(por_motivo)),
-                    xaxis_title="Nº de recusas",
-                    **CHART_LAYOUT,
-                )
-                st.plotly_chart(fig_recusa, use_container_width=True)
-            with col_r2:
-                recusas_tbl = recusas_mes.rename(
-                    columns={
-                        "data_recusa": "Data",
-                        "chapter": "Chapter",
-                        "senioridade": "Senioridade",
-                        "motivo_recusa": "Motivo",
-                        "dias_para_recusa": "Dias até recusar",
-                    }
-                )
-                render_table(
-                    recusas_tbl,
-                    numeric_cols={"Dias até recusar"},
-                    help_map={
-                        "Dias até recusar": "Dias entre a oferta ser enviada e o candidato recusar — recusa rápida geralmente é oferta concorrente; recusa lenta geralmente é negociação/contraproposta.",
-                    },
-                )
-
 st.markdown(
     f"""
     <div class="brand-footer">
-        Farol de Hiring · Artefact People &amp; Talent — protótipo de discovery, dados mock
+        Farol de Hiring · Artefact People &amp; Talent — Greenhouse (pipe) + Artefactory (demanda)
     </div>
     """,
     unsafe_allow_html=True,

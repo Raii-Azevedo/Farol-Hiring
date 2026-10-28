@@ -21,9 +21,18 @@ cp .streamlit/secrets.toml.example .streamlit/secrets.toml   # depois preencha c
 streamlit run app.py
 ```
 
-Abre em `http://localhost:8501`. Os arquivos `.csv`, a pasta `assets/` e a pasta
-`.streamlit/` precisam estar na mesma pasta que o `app.py` — todos os caminhos
-são relativos ao arquivo.
+Abre em `http://localhost:8501`. A pasta `assets/` e a pasta `.streamlit/`
+precisam estar na mesma pasta que o `app.py`.
+
+O app lê os dados direto do **BigQuery**, das duas views em
+`br-in-dataplatform.greenhouse_dev` (ver `sql/`). Antes de rodar, autentique:
+
+```bash
+gcloud auth application-default login
+```
+
+Sem credencial válida ou sem acesso de leitura ao dataset, o app mostra o erro
+e para — não existe mais fallback para CSV.
 
 Sem `.streamlit/secrets.toml` preenchido, o app roda em **modo aberto** (sem
 checagem de login) e mostra um aviso visível na tela — útil para desenvolver
@@ -41,22 +50,15 @@ requirements.txt                → dependências Python (streamlit, Authlib, pa
 .gitignore                      → garante que .streamlit/secrets.toml nunca seja commitado
 assets/                         → logo da Artefact extraída do Branding Guide oficial (Nov/2024)
 
-farol_executivo.csv             → grão: mês × chapter × senioridade — demanda, oferta, gap, farol
-funil_pipe.csv                  → grão: mês × chapter × etapa — volume, conversão, SLA
-funil_pipe_nivel.csv            → grão: mês × chapter × senioridade × etapa — mesmo volume de
-                                   funil_pipe.csv, quebrado por senioridade (soma bate com funil_pipe.csv)
-su_banco_talentos.csv           → grão: candidato — banco de "See You Soon" e score de reativação
-candidatos_parados.csv          → quem está parado em cada etapa (mock): vaga,
-                                  squad, dias na etapa e status (atenção/crítico)
-gerar_candidatos_parados.py     → gera candidatos_parados.csv a partir do funil
-su_ofertas.csv                  → grão: mês × chapter — ofertas e aceites vindos do banco See You Soon
-log_alertas.csv                 → grão: evento — histórico de mudanças de farol (auditoria do Google Chat)
-propostas_recusadas.csv         → grão: proposta recusada — motivo e tempo até a recusa
+sql/                            → o SQL das views que alimentam o app:
+  vw_farol_base.sql               grão candidatura — funil, SLA, candidatos parados,
+                                  See You Soon, ofertas e a oferta ajustada
+  vw_farol_demanda.sql            grão chapter × senioridade × mês — demanda líquida
+                                  (forecast do Artefactory até 2027-12)
+  passo1_descoberta.sql           queries que levantaram o de-para de etapa e carreira
+  README.md                       o que cada view responde e o que ainda é limitação de dado
 
-build_mocks.py                  → não está neste repositório (referência histórica); os CSVs mock
-                                   principais foram criados à mão. gerar_mocks_extra.py cobre só os
-                                   dois CSVs derivados (funil_pipe_nivel.csv e su_ofertas.csv),
-                                   recalculando-os a partir de farol_executivo.csv e funil_pipe.csv.
+Os CSVs mock antigos continuam na pasta, mas o app não lê mais nenhum deles.
 
 CONTEXTO.txt                    → plano-base original do projeto (fórmula do gap, fontes, riscos)
 "Farol de Hiring - Discovery.docx" → documento de discovery (arquitetura, KPIs, visualizações,
@@ -133,8 +135,7 @@ por etapa e por nível (com filtro de carreira/senioridade e flag de excesso de
 volume), a seção "Candidatos parados por etapa" (tabela status × etapa no
 mesmo formato do mock: clicar num número abre o detalhamento por vaga e, de
 lá, a lista de quem está parado e há quantos dias), resumo de status e tabela
-de gargalos e SLA, e uma seção de propostas recusadas (motivo + tempo até a
-recusa).
+e de gargalos e SLA.
 
 Os detalhamentos abrem sempre pelo clique no próprio visual, como no mock:
 nos gráficos de conversão etapa a etapa e de tempo médio por etapa, clicando
@@ -144,10 +145,21 @@ modais seguem o tema claro/escuro da página (o chrome nativo do Streamlit é
 sempre claro, então o fundo do modal é forçado via CSS a acompanhar o tema
 ativo).
 
-As etapas do funil seguem os nomes reais do processo (conforme o deck *Projeto
-Farol de Contratação*, jun/2026): Envio de Currículo → Entrevista Fit →
-Técnica 1 → Técnica 2 → Conversa com André → Oferta → Contratação, com o
-**See You Soon** como backlog paralelo de reativação.
+As etapas do funil seguem os nomes reais do processo, agora validados contra
+o Greenhouse (ver `sql/passo1_descoberta.sql`): Avaliação de currículo → Envio do
+Case Escrito → Avaliação case escrito → Entrevista Fit → Entrevista Técnica 1
+→ Entrevista Técnica 2 → Conversa Final → Oferta → Contratação, com o **See
+You Soon** como backlog paralelo de reativação.
+
+O Greenhouse usa 19 nomes diferentes para essas etapas (variações de caixa e
+de acento, três nomes para a conversa final, e o pipeline default em inglês
+em algumas vagas). O de-para está em `sql/passo2_seeds.sql` (`d_farol_etapa`), que é
+também onde moram a ordem das etapas e as metas de SLA. "Contratação" é etapa
+aqui, mas no Greenhouse é *status* da candidatura, não stage.
+
+O funil mock foi realinhado a esses nomes pelo `realinhar_funil_real.py`;
+os volumes das etapas que já existiam foram preservados e as duas etapas do
+case entraram por interpolação.
 
 ## Fórmula do farol
 

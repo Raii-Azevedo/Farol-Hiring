@@ -2,3 +2,8 @@ streamlit>=1.42.0
 Authlib>=1.3.2
 pandas>=2.0
 plotly>=5.20
+
+# fonte de dados: as views vw_farol_base e vw_farol_demanda no BigQuery.
+# db-dtypes é necessário para o to_dataframe() converter colunas DATE.
+google-cloud-bigquery>=3.17
+db-dtypes>=1.2
