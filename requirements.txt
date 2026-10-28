@@ -7,3 +7,6 @@ plotly>=5.20
 # db-dtypes é necessário para o to_dataframe() converter colunas DATE.
 google-cloud-bigquery>=3.17
 db-dtypes>=1.2
+# pyarrow é o que o to_dataframe() usa para trazer o resultado; sem ele a
+# query roda e a conversão para DataFrame falha.
+pyarrow>=14.0

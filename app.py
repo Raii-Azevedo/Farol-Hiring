@@ -679,7 +679,24 @@ except Exception as e:  # noqa: BLE001 — qualquer falha de BigQuery/credencial
         or "could not automatically determine credentials" in _detalhe.lower()
         or "default credentials" in _detalhe.lower()
     )
-    if _sem_credencial:
+    # biblioteca faltando não é problema de permissão nem de credencial, mas o
+    # erro ("cannot import name 'bigquery' from 'google.cloud'") parece um:
+    # google.cloud é namespace package, então importar o que não está
+    # instalado dá ImportError em vez de ModuleNotFoundError
+    _falta_lib = isinstance(e, ImportError) or "from 'google.cloud'" in _detalhe
+    if _falta_lib:
+        st.error(
+            "**Falta instalar a biblioteca do BigQuery neste ambiente.**\n\n"
+            "Não é permissão nem credencial: o Python não encontrou o pacote.\n\n"
+            "No terminal, na pasta do projeto:\n\n"
+            "```\npip install -r requirements.txt\n```\n\n"
+            "Se o erro continuar, provavelmente existe um pacote chamado só "
+            "`google` instalado, que quebra o namespace `google.cloud`:\n\n"
+            "```\npip uninstall google\npip install --force-reinstall "
+            "google-cloud-bigquery db-dtypes\n```\n\n"
+            f"Detalhe técnico: {e}"
+        )
+    elif _sem_credencial:
         st.error(
             "**Não há credencial do Google configurada nesta máquina.**\n\n"
             "O erro de *metadata server* abaixo é o google-auth tentando o último "
