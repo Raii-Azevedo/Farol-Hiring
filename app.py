@@ -611,14 +611,20 @@ def load_data():
     # Saem dos flags, não da contagem por etapa: "Oferta" no funil é quem
     # está lá HOJE, e "Contratação" é todo mundo já contratado. Dividir um
     # pelo outro mistura estoque com histórico e passa de 100%.
+    #
+    # Recusa de oferta não sai do offer_status: o Greenhouse só preenche
+    # 'Accepted' (contratados); quem saiu na etapa Oferta fica 'N/A'. Por
+    # isso a recusa é medida pela etapa: reprovado ESTANDO em Oferta.
+    base["flag_recusa_oferta"] = (
+        base["application_status"].str.lower().eq("rejected") & base["etapa"].eq("Oferta")
+    ).astype(int)
     taxas = (
         base[base["chapter"].notna()]
         .groupby("chapter", as_index=False)
         .agg(
             candidaturas=("application_id", "count"),
-            ofertas=("flag_oferta", "sum"),
-            aceites=("flag_aceite", "sum"),
             contratados=("flag_contratado", "sum"),
+            recusas_oferta=("flag_recusa_oferta", "sum"),
         )
     )
 
@@ -647,7 +653,7 @@ def load_data():
     su_ofertas = (
         por_vaga[por_vaga["chapter"].notna()]
         .groupby("chapter", as_index=False)
-        .agg(ofertas_sys=("su_ofertas_vaga", "sum"), aceites_sys=("su_aceites_vaga", "sum"))
+        .agg(candidaturas_sys=("su_candidaturas_vaga", "sum"), aceites_sys=("su_aceites_vaga", "sum"))
     )
     su_ofertas["mes"], su_ofertas["mes_label"] = mes_snap, label_snap
 
@@ -835,12 +841,15 @@ def pipe_qualificado(mes: str, chapter: str | None = None) -> int:
 
 
 def taxa_aceite_oferta(mes: str, chapter: str | None = None) -> float | None:
-    """% de ofertas enviadas que foram aceitas (flag_aceite / flag_oferta)."""
+    """% das ofertas já decididas que viraram contratação:
+    contratados / (contratados + reprovados na etapa Oferta). Quem ainda
+    está em Oferta fica fora — não decidiu. Premissa: todo contratado
+    passou pela Oferta (o Greenhouse não guarda a etapa do contratado)."""
     df = taxas_df if not chapter else taxas_df[taxas_df["chapter"] == chapter]
-    ofertas = df["ofertas"].sum()
-    if not ofertas:
+    decididas = df["contratados"].sum() + df["recusas_oferta"].sum()
+    if not decididas:
         return None
-    return df["aceites"].sum() / ofertas * 100
+    return df["contratados"].sum() / decididas * 100
 
 
 def tempo_medio_contratacao(mes: str) -> float | None:
@@ -869,18 +878,19 @@ def conversao_total_pipe(mes: str) -> float | None:
 
 
 def taxa_aceite_sys(mes: str, chapter: str | None = None) -> float | None:
-    """% de ofertas feitas a candidatos do banco See You Soon que viraram
-    contratação, neste mês (fonte: su_ofertas.csv)."""
+    """Conversão do banco See You Soon: % das pessoas que passaram pelo
+    banco e aceitaram oferta. Não é taxa de aceite de oferta porque a view
+    de SU não registra oferta recusada (só 'Accepted' e 'N/A') — por
+    oferta, daria 100% sempre."""
     if su_ofertas_df.empty:
         return None
     df = su_ofertas_df[su_ofertas_df["mes"] == MES_SNAPSHOT]
     if chapter:
         df = df[df["chapter"] == chapter]
-    ofertas = df["ofertas_sys"].sum()
-    aceites = df["aceites_sys"].sum()
-    if not ofertas:
+    candidaturas = df["candidaturas_sys"].sum()
+    if not candidaturas:
         return None
-    return aceites / ofertas * 100
+    return df["aceites_sys"].sum() / candidaturas * 100
 
 
 def su_tempo_medio_banco() -> float | None:
@@ -1200,7 +1210,7 @@ with tab_exec:
             "Taxa de aceite de oferta",
             f"{aceite_total:.0f}%" if aceite_total is not None else "—",
             _delta_html(aceite_total, aceite_ant, True, "{:.0f}", "pp"),
-            "% de ofertas enviadas que viraram contratação, somando todos os chapters.",
+            "Contratados / (contratados + reprovados na etapa Oferta), somando todos os chapters.",
         ),
     ]
     st.markdown(
@@ -1474,13 +1484,13 @@ with tab_pipe:
             "Taxa de aceite de oferta (Geral)",
             f"{aceite_geral_mes:.0f}%" if aceite_geral_mes is not None else "—",
             _delta_pipe(aceite_geral_mes, aceite_geral_ant, mes_ant2),
-            "Ofertas aceitas / ofertas enviadas, somando todos os chapters.",
+            "Contratados / (contratados + reprovados na etapa Oferta), somando todos os chapters.",
         ),
         (
-            "Taxa de aceite — See You Soon",
+            "Conversão do See You Soon",
             f"{aceite_sys_mes:.0f}%" if aceite_sys_mes is not None else "—",
             _delta_pipe(aceite_sys_mes, aceite_sys_ant, mes_ant2),
-            "Ofertas aceitas / ofertas enviadas a candidatos do banco See You Soon.",
+            "Pessoas que aceitaram oferta / pessoas que passaram pelo banco See You Soon.",
         ),
         (
             "See You Soon — tempo médio no banco",
@@ -1580,7 +1590,10 @@ with tab_pipe:
     col_ag, col_as = st.columns(2)
     with col_ag:
         st.markdown("##### Taxa de aceite de oferta por carreira (Geral)")
-        st.caption("Percentual de ofertas aceitas por chapter, neste mês.")
+        st.caption(
+            "Contratados / (contratados + reprovados na etapa Oferta), por chapter, no histórico do Greenhouse. "
+            "A recusa sai da etapa porque o Greenhouse não registra oferta recusada."
+        )
         chapters_aceite = sorted(farol_df["chapter"].unique())
         aceite_vals = [taxa_aceite_oferta(mes_sel2, ch) for ch in chapters_aceite]
         fig_aceite_geral = go.Figure(
@@ -1601,8 +1614,11 @@ with tab_pipe:
         st.plotly_chart(fig_aceite_geral, use_container_width=True)
 
     with col_as:
-        st.markdown("##### Taxa de aceite — See You Soon por carreira")
-        st.caption("Percentual de ofertas aceitas vindas do banco See You Soon, por chapter, neste mês.")
+        st.markdown("##### Conversão do See You Soon por carreira")
+        st.caption(
+            "% das pessoas que passaram pelo banco See You Soon e aceitaram oferta, por chapter. "
+            "Não é taxa de aceite: o Greenhouse não registra oferta recusada do banco."
+        )
         chapters_sys = sorted(su_ofertas_df["chapter"].unique()) if not su_ofertas_df.empty else []
         if chapters_sys:
             aceite_sys_vals = [taxa_aceite_sys(mes_sel2, ch) for ch in chapters_sys]
@@ -1613,7 +1629,7 @@ with tab_pipe:
                     marker_color=PINK,
                     text=[f"{v:.0f}%" if v is not None else "—" for v in aceite_sys_vals],
                     textposition="outside",
-                    hovertemplate="<b>%{x}</b><br>Aceite SYS: <b>%{y:.0f}%</b><extra></extra>",
+                    hovertemplate="<b>%{x}</b><br>Conversão do banco: <b>%{y:.0f}%</b><extra></extra>",
                 )
             )
             fig_aceite_sys.update_layout(
@@ -1623,7 +1639,7 @@ with tab_pipe:
             )
             st.plotly_chart(fig_aceite_sys, use_container_width=True)
         else:
-            render_note("Sem dado de ofertas do banco See You Soon.", variant="neutral")
+            render_note("Sem dado do banco See You Soon.", variant="neutral")
 
     st.markdown("##### Candidatos por etapa × chapter (heatmap)")
     st.caption("Concentração de candidatos parados em cada etapa — células mais escuras indicam mais gente aguardando ali, em qualquer chapter.")

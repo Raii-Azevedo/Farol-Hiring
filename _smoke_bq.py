@@ -330,7 +330,9 @@ print(f"  parados             : {len(app.parados_df)} candidatos, modais OK")
 
 # ---- a seção de recusas tem que ter sumido ----
 fonte = open("/root/app/app.py", encoding="utf-8").read()
-assert "recusa" not in fonte.lower(), "sobrou menção a recusa no código"
+# "recusa" em si pode aparecer: a taxa de aceite mede recusa pela etapa
+# Oferta. O que não pode voltar é a seção, que dependia do motivo da recusa.
+assert "propostas recusadas" not in fonte.lower(), "sobrou a seção de propostas recusadas"
 assert "Propostas recusadas" not in "\n".join(CALLS["markdown"] + CALLS["captions"])
 print("  propostas recusadas : removida do código e da tela")
 
