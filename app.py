@@ -521,19 +521,31 @@ def _rotulo_mes(ym: str) -> str:
     return f"{_MES_PT[int(mes)]}/{ano}"
 
 
+# Gap abaixo de 1 pessoa não move o farol, qualquer que seja o percentual.
+# Sem isso, demanda de 0,5 FTE com oferta zero dava gap de +100% e o card
+# mandava "acelerar" para abrir meia vaga.
+GAP_MINIMO_PESSOAS = 1.0
+
+
 def farol_status(demanda: float, oferta: float):
     """Semáforo a partir do gap entre demanda líquida e oferta ajustada.
 
-    Demanda líquida NEGATIVA é um caso real: no mês corrente as
-    desalocações costumam superar os pedidos novos. Não dá para calcular
-    gap percentual em cima de denominador negativo (o sinal inverte e o
-    farol diria 'acelerar' justamente quando sobra gente), então esse
-    caso vira 'pausar' direto, sem percentual."""
+    Ordem das regras:
+    1. Sem demanda cadastrada (NaN) -> sem dado.
+    2. Gap absoluto menor que GAP_MINIMO_PESSOAS -> manter: falta ou sobra
+       menos de uma pessoa, não há o que abrir nem pausar. Cobre demanda e
+       oferta zeradas.
+    3. Demanda líquida <= 0 (com oferta sobrando) -> pausar, sem percentual:
+       no mês corrente as desalocações costumam superar os pedidos, e
+       percentual sobre denominador negativo inverte o sinal.
+    4. Senão, o gap percentual decide: > +20% acelerar, < -10% pausar."""
     if demanda is None or pd.isna(demanda):
         return "sem_dado", None
-    if demanda == 0:
-        return "sem_dado", None
-    if demanda < 0:
+    oferta = 0.0 if oferta is None or pd.isna(oferta) else oferta
+    if abs(demanda - oferta) < GAP_MINIMO_PESSOAS:
+        gap_pct = round((demanda - oferta) / demanda * 100, 1) if demanda > 0 else None
+        return "manter", gap_pct
+    if demanda <= 0:
         return "pausar", None
     gap_pct = round((demanda - oferta) / demanda * 100, 1)
     if gap_pct > 20:
@@ -817,6 +829,14 @@ def pipe_trend(chapter: str, etapa: str, col: str = "tempo_medio_dias") -> list:
     return hist[col].tolist()
 
 
+def gap_texto(gap_pct, demanda: float, oferta: float) -> str:
+    """Gap para exibir: em % quando existe, senão em pessoas (demanda
+    líquida <= 0 não tem percentual — ver farol_status)."""
+    if gap_pct is not None and pd.notna(gap_pct):
+        return f"{gap_pct:+.0f}%"
+    return f"{demanda - oferta:+.1f} pessoas"
+
+
 def farol_insight(status: str, gap_pct, demanda: float, oferta: float) -> str:
     """Frase curta de leitura/ação por trás do status — a 'inteligência' por
     trás do número puro, mostrada no hover do card."""
@@ -828,9 +848,19 @@ def farol_insight(status: str, gap_pct, demanda: float, oferta: float) -> str:
             f"(gap {gap_pct:+.0f}%). Priorize abrir vagas neste chapter."
         )
     if status == "manter":
+        if abs(demanda - oferta) < GAP_MINIMO_PESSOAS:
+            return (
+                f"Diferença de {demanda - oferta:+.1f} pessoa entre demanda e oferta — menos de uma vaga. "
+                "Mantenha o ritmo atual de contratação."
+            )
         return (
             f"Oferta e demanda estão equilibradas (gap {gap_pct:+.0f}%). "
             "Mantenha o ritmo atual de contratação."
+        )
+    if gap_pct is None:
+        return (
+            f"Demanda líquida de {demanda:.1f} pessoas: as desalocações superam os pedidos neste mês. "
+            "Considere pausar novas aberturas ou redirecionar candidatos para outro chapter."
         )
     return (
         f"Oferta já superou a demanda em {abs(gap_pct):.0f}%. "
@@ -1297,12 +1327,14 @@ with tab_farol:
         if n_acelerar:
             top_acel = agg[agg["status"] == "acelerar"].sort_values("gap_pct", ascending=False).iloc[0]
             partes.append(
-                f"<b>{n_acelerar} chapter(s) em 🟢 acelerar</b> — destaque para <b>{top_acel['chapter']}</b> (gap {top_acel['gap_pct']:+.0f}%)"
+                f"<b>{n_acelerar} chapter(s) em 🟢 acelerar</b> — destaque para <b>{top_acel['chapter']}</b> (gap {gap_texto(top_acel['gap_pct'], top_acel['demanda'], top_acel['oferta'])})"
             )
         if n_pausar:
-            top_pausa = agg[agg["status"] == "pausar"].sort_values("gap_pct").iloc[0]
+            # pelo gap em pessoas: o % não existe quando a demanda líquida é <= 0
+            pausados = agg[agg["status"] == "pausar"]
+            top_pausa = pausados.loc[(pausados["demanda"] - pausados["oferta"]).idxmin()]
             partes.append(
-                f"<b>{n_pausar} chapter(s) em 🔴 pausar</b> — o mais crítico é <b>{top_pausa['chapter']}</b> (gap {top_pausa['gap_pct']:+.0f}%)"
+                f"<b>{n_pausar} chapter(s) em 🔴 pausar</b> — o mais crítico é <b>{top_pausa['chapter']}</b> (gap {gap_texto(top_pausa['gap_pct'], top_pausa['demanda'], top_pausa['oferta'])})"
             )
         finding_txt = f"Em <b>{mes_label_sel}</b>: " + " · ".join(partes) + "."
     render_finding(finding_txt)
@@ -1321,7 +1353,7 @@ with tab_farol:
         with col:
             color = STATUS_COLOR[row["status"]]
             bg = STATUS_BG[row["status"]]
-            gap_txt = f"{row['gap_pct']:+.0f}%" if pd.notna(row["gap_pct"]) else "N/D"
+            gap_txt = gap_texto(row["gap_pct"], row["demanda"], row["oferta"])
             tip = _html_attr(farol_insight(row["status"], row["gap_pct"], row["demanda"], row["oferta"]))
             st.markdown(
                 f"""
@@ -1359,6 +1391,10 @@ with tab_farol:
         render_note("Sem dado suficiente para nenhuma senioridade deste chapter neste mês.", variant="warn")
     else:
         status_labels = detail_ok["farol_status"].map(STATUS_LABEL)
+        gaps_txt = [
+            gap_texto(g, d, o)
+            for g, d, o in zip(detail_ok["gap_pct"], detail_ok["demanda_liquida"], detail_ok["oferta_ajustada"])
+        ]
         max_val = float(max(detail_ok["oferta_ajustada"].max(), detail_ok["demanda_liquida"].max()))
 
         fig = go.Figure()
@@ -1384,12 +1420,12 @@ with tab_farol:
                     line=dict(width=2, color=PAL["surface"]),
                 ),
                 name="Oferta ajustada",
-                customdata=list(zip(detail_ok["demanda_liquida"], detail_ok["gap_pct"], status_labels)),
+                customdata=list(zip(detail_ok["demanda_liquida"], gaps_txt, status_labels)),
                 hovertemplate=(
                     "<b>%{y}</b><br>"
                     "Oferta ajustada: <b>%{x:.1f}</b> pessoas<br>"
-                    "Demanda líquida: <b>%{customdata[0]:.0f}</b> pessoas<br>"
-                    "Gap: <b>%{customdata[1]:+.0f}%</b><br>"
+                    "Demanda líquida: <b>%{customdata[0]:.1f}</b> pessoas<br>"
+                    "Gap: <b>%{customdata[1]}</b><br>"
                     "Status: <b>%{customdata[2]}</b>"
                     "<extra></extra>"
                 ),
@@ -1409,7 +1445,7 @@ with tab_farol:
             fig.add_annotation(
                 x=max(r["oferta_ajustada"], r["demanda_liquida"]),
                 y=r["senioridade"],
-                text=f"{r['gap_pct']:+.0f}%",
+                text=gap_texto(r["gap_pct"], r["demanda_liquida"], r["oferta_ajustada"]),
                 showarrow=False,
                 xanchor="left",
                 xshift=12,

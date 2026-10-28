@@ -175,10 +175,17 @@ Oferta ajustada = (candidatos em etapas finais × conversão residual)
 
 Gap = Demanda líquida − Oferta ajustada
 
+⚪ Sem dado  → sem demanda registrada no período
+🟡 Manter    → |Gap| < 1 pessoa (falta ou sobra menos de uma vaga),
+               qualquer que seja o percentual
+🔴 Pausar    → demanda líquida ≤ 0 (desalocações superam pedidos)
 🟢 Acelerar  → Gap > 20% da demanda
 🟡 Manter    → Gap entre −10% e +20%
 🔴 Pausar    → Gap < −10%
-⚪ Sem dado  → sem demanda registrada no período
+
+As regras valem nessa ordem. A trava de 1 pessoa existe porque, com
+demanda de 0,5 FTE e oferta zero, o gap percentual dá +100% e o farol
+mandaria "acelerar" para abrir meia vaga.
 ```
 
 ## Arquitetura planejada (real, não implementada aqui)
