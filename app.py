@@ -737,9 +737,27 @@ except Exception as e:  # noqa: BLE001 — qualquer falha de BigQuery/credencial
 
 # Dois eixos de tempo. MESES vem da DEMANDA (forecast); o pipe é sempre a
 # foto de hoje (MES_SNAPSHOT), porque nenhuma view do Greenhouse tem data.
+#
+# O forecast do Artefactory vai até 2027-12, mas a oferta é o pipe de HOJE
+# projetado em ~45 dias: comparar essa oferta com a demanda de um ano à
+# frente não diz nada. Por isso o farol só mostra o mês corrente e os
+# próximos JANELA_MESES.
+JANELA_MESES = 3
+_FIM_FORECAST = str(farol_df["mes"].max())
+_fim_janela = (pd.Period(MES_SNAPSHOT, "M") + JANELA_MESES).strftime("%Y-%m")
+_na_janela = farol_df["mes"].astype(str).between(MES_SNAPSHOT, _fim_janela)
+if _na_janela.any():  # se o forecast for todo antigo, melhor mostrar tudo que nada
+    farol_df = farol_df[_na_janela]
+
 MES_LABELS = farol_df.drop_duplicates("mes").set_index("mes")["mes_label"].to_dict()
 MES_LABELS.setdefault(MES_SNAPSHOT, _rotulo_mes(MES_SNAPSHOT))
 MESES = sorted(m for m in MES_LABELS if m in set(farol_df["mes"]))
+
+# Abre no PRÓXIMO mês, não no último da lista: o mês corrente já está no
+# fim (desalocações superam pedidos e a demanda líquida sai negativa), e
+# o último da janela é o mais especulativo.
+_proximo = (pd.Period(MES_SNAPSHOT, "M") + 1).strftime("%Y-%m")
+IDX_MES_PADRAO = MESES.index(_proximo) if _proximo in MESES else 0
 
 # Aviso de escopo calculado do próprio dado, para não envelhecer: diz de
 # quando é a foto do pipe, até onde vai o forecast, e quais chapters têm
@@ -748,7 +766,9 @@ _sem_demanda = sorted(set(pipe_df["chapter"].dropna()) - set(farol_df["chapter"]
 _aviso = (
     f"Dados oficiais do BigQuery. Pipe: foto de <b>{MES_LABELS[MES_SNAPSHOT]}</b> — nenhuma "
     "view do Greenhouse tem data, então o funil não tem histórico. Demanda: forecast de "
-    f"<b>{MES_LABELS[MESES[0]]}</b> a <b>{MES_LABELS[MESES[-1]]}</b>."
+    f"<b>{MES_LABELS[MESES[0]]}</b> a <b>{MES_LABELS[MESES[-1]]}</b> (mês atual + {JANELA_MESES}; "
+    f"o Artefactory projeta até {_rotulo_mes(_FIM_FORECAST)}, mas comparar o pipe de hoje com "
+    "demanda tão distante não ajuda a decidir agora)."
 )
 if _sem_demanda:
     _aviso += (
@@ -1127,7 +1147,7 @@ with tab_exec:
     )
 
     mes_sel0 = st.selectbox(
-        "Mês de referência", MESES, index=len(MESES) - 1, format_func=lambda m: MES_LABELS[m], key="mes_exec"
+        "Mês de referência", MESES, index=IDX_MES_PADRAO, format_func=lambda m: MES_LABELS[m], key="mes_exec"
     )
     mes_ant0 = mes_anterior(mes_sel0)
 
@@ -1221,7 +1241,7 @@ with tab_farol:
     )
 
     mes_sel = st.selectbox(
-        "Mês de referência", MESES, index=len(MESES) - 1, format_func=lambda m: MES_LABELS[m], key="mes_farol"
+        "Mês de referência", MESES, index=IDX_MES_PADRAO, format_func=lambda m: MES_LABELS[m], key="mes_farol"
     )
 
     df_mes = farol_df[farol_df["mes"] == mes_sel]

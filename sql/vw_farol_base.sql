@@ -83,8 +83,9 @@ etapa_depara AS (
 --     [DS BR] - Intern Data Scientist Brazil     -> Data Science, Estagiário
 --     [DS BR] - Senior Data Scientist Brazil     -> Data Science, Senior
 -- Os níveis observados são só três: Intern, sem marca, e Senior.
--- Vaga sem código de chapter do farol (ex.: Strategy Consulting Manager,
--- [MD BR], 'Teste') fica com chapter NULL e sai das telas por chapter.
+-- Vaga que não é de chapter do farol nem pelo código nem pelo nome (ex.:
+-- Strategy Consulting Manager, [MD BR], 'Teste') fica com chapter NULL e
+-- sai das telas por chapter. Esse NULL é esperado, não erro.
 -- ---------------------------------------------------------------------
 chapter_depara AS (
   SELECT * FROM UNNEST([
@@ -93,7 +94,8 @@ chapter_depara AS (
     STRUCT('DE', 'Data Engineering'),
     STRUCT('DC', 'Data Consultant'),
     STRUCT('SE', 'Software Engineering'),
-    STRUCT('AI', 'AI Engineering')
+    STRUCT('AI', 'AI Engineering'),
+    STRUCT('FDE', 'AI Engineering')   -- [FDE] - Deployed AI Engineers
   ])
 ),
 
@@ -101,20 +103,41 @@ chapter_depara AS (
 -- 452 candidaturas de um chapter do farol. job_name é a chave de todo
 -- join (as views de etapa e SU não têm job_id), então sem TRIM essas
 -- vagas somem sem erro nenhum.
+--
+-- Nem toda vaga tem o código. Sem ele, o chapter sai do NOME do cargo
+-- (fallback): "Senior Data Scientist - Sao Paulo", as candidaturas
+-- espontâneas "Website Data Engineer - Sao Paulo" e afins somavam ~700
+-- pessoas em processo fora do farol. Cargo de gestão (Manager, Partner,
+-- Lead...) continua fora: não se contrata por este funil.
 vaga AS (
   SELECT
-    a.job_id,
-    TRIM(a.job_name) AS job_name,
-    cd.chapter,
+    job_id, job_name, chapter,
     CASE
-      WHEN cd.chapter IS NULL THEN NULL
-      WHEN REGEXP_CONTAINS(a.job_name, r'(?i)\b(intern|estagi[áa]ri[oa])\b')  THEN 'Estagiário'
-      WHEN REGEXP_CONTAINS(a.job_name, r'(?i)(\bsenior\b|\bs[êe]nior\b|\bsr\b)') THEN 'Senior'
+      WHEN chapter IS NULL THEN NULL
+      WHEN REGEXP_CONTAINS(job_name, r'(?i)\b(intern|estagi[áa]ri[oa])\b')  THEN 'Estagiário'
+      WHEN REGEXP_CONTAINS(job_name, r'(?i)(\bsenior\b|\bs[êe]nior\b|\bsr\b)') THEN 'Senior'
       ELSE 'Pleno'
     END AS senioridade
-  FROM (SELECT DISTINCT job_id, job_name FROM `br-in-dataplatform.greenhouse_dev.greenhouse_v_applications`) a
-  LEFT JOIN chapter_depara cd
-    ON cd.codigo = SPLIT(REGEXP_EXTRACT(TRIM(a.job_name), r'^\[([^\]]+)\]'), ' ')[SAFE_OFFSET(0)]
+  FROM (
+    SELECT
+      a.job_id,
+      TRIM(a.job_name) AS job_name,
+      COALESCE(
+        cd.chapter,
+        CASE
+          WHEN REGEXP_CONTAINS(a.job_name, r'(?i)\b(manager|partner|director|chief|head|lead)\b') THEN NULL
+          WHEN REGEXP_CONTAINS(a.job_name, r'(?i)data scien')          THEN 'Data Science'
+          WHEN REGEXP_CONTAINS(a.job_name, r'(?i)data engineer')       THEN 'Data Engineering'
+          WHEN REGEXP_CONTAINS(a.job_name, r'(?i)data consult')        THEN 'Data Consultant'
+          WHEN REGEXP_CONTAINS(a.job_name, r'(?i)analytics engineer')  THEN 'Analytics Engineering'
+          WHEN REGEXP_CONTAINS(a.job_name, r'(?i)\bAI engineer')       THEN 'AI Engineering'
+          WHEN REGEXP_CONTAINS(a.job_name, r'(?i)software engineer')   THEN 'Software Engineering'
+        END
+      ) AS chapter
+    FROM (SELECT DISTINCT job_id, job_name FROM `br-in-dataplatform.greenhouse_dev.greenhouse_v_applications`) a
+    LEFT JOIN chapter_depara cd
+      ON cd.codigo = SPLIT(REGEXP_EXTRACT(TRIM(a.job_name), r'^\[([^\]]+)\]'), ' ')[SAFE_OFFSET(0)]
+  )
 ),
 
 -- ---------------------------------------------------------------------
