@@ -20,6 +20,7 @@ import streamlit as st
 from PIL import Image
 
 import auth
+import bq
 
 # ---------------------------------------------------------------------------
 # Paleta de marca — extraída do "NEW Branding Guide Artefact - Nov 2024.pptx".
@@ -446,7 +447,7 @@ st.markdown(
 # ---------------------------------------------------------------------------
 # Autenticação (Google OAuth) + Autorização (allowlist) — gate principal.
 # Autenticação != autorização: o Google resolve "quem é você", a allowlist em
-# authorized_users.csv resolve "você pode acessar este dashboard". Enforcement
+# `greenhouse_dash_access` (BigQuery) resolve "você pode acessar". Enforcement
 # no servidor via st.stop() dentro de auth.py — nada do dashboard abaixo desta
 # linha é montado/enviado ao navegador se o usuário não passar nos dois.
 # ---------------------------------------------------------------------------
@@ -554,38 +555,14 @@ DATASET_BQ = "greenhouse_dev"
 HORIZONTE_FAROL_DIAS = 45
 
 
-def _credenciais_bq():
-    """Credencial do BigQuery, em ordem de preferência:
-
-    1. service account em `.streamlit/secrets.toml`, sob [gcp_service_account]
-       — é o que funciona em deploy, onde não existe gcloud;
-    2. nada: cai na credencial de aplicação local, criada por
-       `gcloud auth application-default login`.
-    """
-    try:
-        sa = st.secrets["gcp_service_account"]
-    except Exception:
-        return None
-    from google.oauth2 import service_account
-
-    return service_account.Credentials.from_service_account_info(dict(sa))
-
-
 @st.cache_data(ttl=1800, show_spinner="Lendo as views do BigQuery…")
 def load_data():
     """Lê as duas views oficiais e deriva, em pandas, os recortes que cada
     tela usa. As views são duas porque são dois grãos e dois eixos de
     tempo: a demanda é forecast mensal (até 2027-12) e o pipe é foto de
     hoje — o Greenhouse não tem data em nenhuma view."""
-    from google.cloud import bigquery
-
-    client = bigquery.Client(project=PROJETO_BQ, credentials=_credenciais_bq())
-
-    def _ler(view):
-        return client.query(f"SELECT * FROM `{PROJETO_BQ}.{DATASET_BQ}.{view}`").to_dataframe()
-
-    base = _ler("vw_farol_base")
-    demanda = _ler("vw_farol_demanda")
+    base = bq.consultar(f"SELECT * FROM {bq.tabela('vw_farol_base')}")
+    demanda = bq.consultar(f"SELECT * FROM {bq.tabela('vw_farol_demanda')}")
 
     mes_snap = str(pd.to_datetime(base["snapshot_date"].iloc[0]).strftime("%Y-%m"))
     label_snap = _rotulo_mes(mes_snap)

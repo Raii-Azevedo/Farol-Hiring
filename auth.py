@@ -7,9 +7,13 @@ Authentication != Authorization:
   do fluxo OIDC completo (redirect, callback, cookie de sessão) via st.login()
   e expõe a identidade em st.user.
 - Authorization ("você pode acessar este dashboard?") é resolvida aqui, no
-  servidor, consultando authorized_users.csv — hoje um mock local, com a
-  mesma estrutura de colunas de uma futura tabela BigQuery `authorized_users`
-  mantida pelo Data Eng. Ter conta Google válida NÃO dá acesso automático.
+  servidor, consultando a tabela `greenhouse_dash_access` no BigQuery (mesmo
+  dataset das views do farol), mantida pelo time de Dados. Ter conta Google
+  válida NÃO dá acesso automático: quem não está na tabela não entra.
+
+  Consequência prática: a credencial que o app usa para ler o BigQuery
+  precisa de leitura no DATASET, não só nas duas views do farol — se o
+  acesso for recortado nas views, a allowlist fica ilegível e NINGUÉM entra.
 
 Enforcement é sempre no backend: como o Streamlit reexecuta o script inteiro
 no servidor a cada sessão/interação, um st.stop() aqui impede que o HTML e os
@@ -18,13 +22,15 @@ um "if (authorized) showDashboard()" no cliente — o cliente nunca recebe o
 dashboard se a autorização falhar.
 """
 
-from pathlib import Path
-
 import pandas as pd
 import streamlit as st
 
-BASE_DIR = Path(__file__).resolve().parent
-AUTHORIZED_USERS_PATH = BASE_DIR / "authorized_users.csv"
+import bq
+
+# A allowlist é mantida pelo time de Dados no BigQuery, no mesmo dataset das
+# views do farol. Não existe mais CSV local: quem controla quem vê o
+# dashboard é quem controla essa tabela.
+ALLOWLIST = "greenhouse_dash_access"
 
 
 def normalize_email(email: str | None) -> str:
@@ -45,28 +51,38 @@ def _auth_configured() -> bool:
         return False
 
 
-@st.cache_data(ttl=60)
+class AllowlistIndisponivel(RuntimeError):
+    """Não deu para ler a allowlist. Tratado como negação de acesso (fail
+    closed): sem conseguir confirmar que a pessoa pode entrar, ela não
+    entra — mas com uma tela que explica, em vez de 'acesso negado'."""
+
+
+@st.cache_data(ttl=60, show_spinner=False)
 def _load_authorized_users() -> pd.DataFrame:
-    if not AUTHORIZED_USERS_PATH.exists():
-        return pd.DataFrame(columns=["email", "name", "active", "role", "created_at", "updated_at"])
-    df = pd.read_csv(AUTHORIZED_USERS_PATH, dtype=str)
+    """Lê a allowlist do BigQuery. Propaga a falha em vez de devolver lista
+    vazia: lista vazia aqui seria indistinguível de 'ninguém autorizado' e
+    todo mundo veria a tela de acesso negado sem saber por quê."""
+    try:
+        df = bq.consultar(f"SELECT email, role FROM {bq.tabela(ALLOWLIST)}")
+    except Exception as e:  # noqa: BLE001
+        raise AllowlistIndisponivel(str(e)) from e
+    if df.empty:
+        return pd.DataFrame(columns=["email", "role"])
     df["email"] = df["email"].map(normalize_email)
-    df["active"] = df["active"].astype(str).str.strip().str.lower().isin(["true", "1", "yes"])
     return df
 
 
 def check_authorization(email: str):
     """(autorizado: bool, role: str|None). Regra: e-mail presente na
-    allowlist (case-insensitive) E active == true. Nome não é usado para
-    autorizar — só o e-mail."""
+    allowlist, comparado sem diferenciar maiúsculas.
+
+    A tabela não tem coluna de ativo/inativo — estar na lista é a
+    autorização. Para revogar alguém, o time de Dados remove a linha."""
     users = _load_authorized_users()
     match = users[users["email"] == normalize_email(email)]
     if match.empty:
         return False, None
-    row = match.iloc[0]
-    if not bool(row["active"]):
-        return False, None
-    role = row.get("role")
+    role = match.iloc[0].get("role")
     return True, (role if pd.notna(role) and role else None)
 
 
@@ -120,7 +136,7 @@ def render_access_denied(pal: dict, gradient_css: str, logo_html: str, email: st
                 A conta <b style="color:{pal['ink']}">{email}</b> foi autenticada com sucesso pelo Google,
                 mas não está na lista de usuários autorizados do Farol de Hiring.<br><br>
                 Se você acredita que deveria ter acesso, peça ao time de People &amp; Talent para adicionar
-                seu e-mail corporativo à allowlist (<code>authorized_users</code>).
+                seu e-mail à allowlist (<code>greenhouse_dash_access</code>, mantida pelo time de Dados).
             </p>
         </div>
     """
@@ -133,6 +149,28 @@ def render_access_denied(pal: dict, gradient_css: str, logo_html: str, email: st
             use_container_width=True,
             on_click=st.logout,
         )
+
+
+def render_allowlist_indisponivel(pal: dict, gradient_css: str, logo_html: str, detalhe: str) -> None:
+    body = f"""
+        <div style="background:{pal['surface']};border:1px solid {pal['line']};border-radius:14px;
+                    padding:20px 22px;">
+            <div style="font-weight:700;color:{pal['ink']};font-size:15px;margin-bottom:8px;">
+                ⚠️ Não foi possível verificar seu acesso
+            </div>
+            <p style="color:{pal['muted']};font-size:13px;line-height:1.7;margin:0;">
+                O Farol não conseguiu ler a lista de usuários autorizados
+                (<code>{ALLOWLIST}</code>, no BigQuery). Isso não quer dizer que você
+                não tem acesso — quer dizer que não deu para confirmar agora.<br><br>
+                Por segurança, o acesso fica bloqueado até a verificação voltar.
+                Avise o time de Dados.
+            </p>
+            <p style="color:{pal['muted']};font-size:11px;line-height:1.6;margin:14px 0 0;opacity:.75;">
+                Detalhe: {detalhe}
+            </p>
+        </div>
+    """
+    _auth_shell(pal, gradient_css, logo_html, body)
 
 
 def require_login_and_authorization(pal: dict, gradient_css: str, logo_html: str) -> dict:
@@ -153,8 +191,12 @@ def require_login_and_authorization(pal: dict, gradient_css: str, logo_html: str
         render_login_screen(pal, gradient_css, logo_html)
         st.stop()
 
-    with st.spinner("Verificando autorização..."):
-        authorized, role = check_authorization(st.user.email)
+    try:
+        with st.spinner("Verificando autorização..."):
+            authorized, role = check_authorization(st.user.email)
+    except AllowlistIndisponivel as e:
+        render_allowlist_indisponivel(pal, gradient_css, logo_html, str(e))
+        st.stop()
 
     if not authorized:
         render_access_denied(pal, gradient_css, logo_html, st.user.email)
