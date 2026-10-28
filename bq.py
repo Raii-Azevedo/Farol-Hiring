@@ -38,9 +38,37 @@ def cliente():
     return bigquery.Client(project=PROJETO, credentials=_credenciais())
 
 
+# Abaixo disso a REST ganha: abrir a sessão da Storage Read API custa
+# ~1,3s fixos, mais do que baixar umas centenas de linhas pela REST.
+_LINHAS_PARA_STORAGE = 5000
+
+
+def _baixar(job):
+    """Download do resultado de um job já disparado.
+
+    Resultado grande vai pela Storage Read API (google-cloud-bigquery-
+    storage), ~6x mais rápida que a REST na vw_farol_base. Ela exige a
+    permissão bigquery.readsessions.create (role "BigQuery Read Session
+    User"), que o jobUser NÃO inclui — sem ela, cai na REST em vez de
+    quebrar."""
+    if (job.result().total_rows or 0) < _LINHAS_PARA_STORAGE:
+        return job.to_dataframe(create_bqstorage_client=False)
+    try:
+        return job.to_dataframe(create_bqstorage_client=True)
+    except Exception:  # noqa: BLE001 — permissão ou pacote faltando
+        return job.to_dataframe(create_bqstorage_client=False)
+
+
 def consultar(sql: str):
     """Roda a query e devolve um DataFrame."""
-    return cliente().query(sql).to_dataframe()
+    return _baixar(cliente().query(sql))
+
+
+def consultar_varias(*sqls: str) -> list:
+    """Dispara todas as queries de uma vez e só depois espera: o BigQuery
+    executa em paralelo, e o tempo total vira o da mais lenta, não a soma."""
+    jobs = [cliente().query(sql) for sql in sqls]
+    return [_baixar(job) for job in jobs]
 
 
 def tabela(nome: str) -> str:

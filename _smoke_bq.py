@@ -235,7 +235,10 @@ FALHAR_ALLOWLIST = {"on": False}
 class _Job:
     def __init__(self, sql): self.sql = sql
 
-    def to_dataframe(self):
+    def result(self):
+        return types.SimpleNamespace(total_rows=len(self.to_dataframe()))
+
+    def to_dataframe(self, **kw):
         if "greenhouse_dash_access" in self.sql:
             if FALHAR_ALLOWLIST["on"]:
                 raise RuntimeError("403 Access Denied: greenhouse_dash_access")

@@ -554,6 +554,24 @@ DATASET_BQ = "greenhouse_dev"
 # dentro desse prazo.
 HORIZONTE_FAROL_DIAS = 45
 
+# Só as colunas que load_data() usa, em vez de SELECT * (37 colunas).
+# Nome do candidato e da vaga só vêm para quem aparece numa lista: em
+# processo (candidatos parados) e See You Soon. Para as ~55 mil
+# candidaturas encerradas eles não servem para nada — e menos nome de
+# candidato trafegando é melhor também por privacidade.
+# Ao usar uma coluna nova da vw_farol_base no app, acrescente-a aqui.
+_COLUNAS_BASE = """
+    application_id, snapshot_date, job_id, chapter, senioridade,
+    etapa, ordem_etapa, tipo_etapa, application_status,
+    flag_ativo, flag_contratado, flag_see_you_soon,
+    conversao_etapa_pct, tempo_medio_etapa, meta_sla_etapa,
+    status_parado, total_days_in_pipe, dias_esperados_ate_etapa,
+    dias_ate_contratacao, contrib_oferta_ajustada,
+    su_candidaturas_vaga, su_aceites_vaga, su_dias_no_banco_vaga,
+    IF(flag_ativo = 1 OR flag_see_you_soon = 1, candidato, NULL) AS candidato,
+    IF(flag_ativo = 1 OR flag_see_you_soon = 1, vaga, NULL)      AS vaga
+"""
+
 
 @st.cache_data(ttl=1800, show_spinner="Lendo as views do BigQuery…")
 def load_data():
@@ -561,8 +579,13 @@ def load_data():
     tela usa. As views são duas porque são dois grãos e dois eixos de
     tempo: a demanda é forecast mensal (até 2027-12) e o pipe é foto de
     hoje — o Greenhouse não tem data em nenhuma view."""
-    base = bq.consultar(f"SELECT * FROM {bq.tabela('vw_farol_base')}")
-    demanda = bq.consultar(f"SELECT * FROM {bq.tabela('vw_farol_demanda')}")
+    # Vaga sem chapter não entra em nenhuma tela por chapter; só o See You
+    # Soon (tempo médio no banco) olha também quem não tem chapter.
+    base, demanda = bq.consultar_varias(
+        f"SELECT {_COLUNAS_BASE} FROM {bq.tabela('vw_farol_base')} "
+        "WHERE chapter IS NOT NULL OR flag_see_you_soon = 1",
+        f"SELECT * FROM {bq.tabela('vw_farol_demanda')}",
+    )
 
     mes_snap = str(pd.to_datetime(base["snapshot_date"].iloc[0]).strftime("%Y-%m"))
     label_snap = _rotulo_mes(mes_snap)

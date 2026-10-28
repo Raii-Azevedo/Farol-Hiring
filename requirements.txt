@@ -10,3 +10,6 @@ db-dtypes>=1.2
 # pyarrow é o que o to_dataframe() usa para trazer o resultado; sem ele a
 # query roda e a conversão para DataFrame falha.
 pyarrow>=14.0
+# download pela Storage Read API: a vw_farol_base cai de ~23s para ~4s.
+# Sem a permissão de read session, o bq.py volta sozinho para a REST.
+google-cloud-bigquery-storage>=2.24
