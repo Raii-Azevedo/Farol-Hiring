@@ -170,7 +170,7 @@ case entraram por interpolação.
 
 ```
 Oferta ajustada = (candidatos em etapas finais × conversão residual)
-                + (candidatos em etapas iniciais × conversão acumulada)
+                + (candidatos do Envio do Case em diante × conversão acumulada)
                 + (candidatos no SU × taxa de reativação)
 
 Gap = Demanda líquida − Oferta ajustada

@@ -111,6 +111,9 @@ def _demanda_sintetica():
     for mes in MESES_DEMANDA:
         for ch in CHAPTERS_COM_DEMANDA:
             for sen in SENIORIDADES:
+                # o forecast real não tem linha quando não há demanda
+                if (mes, ch, sen) == ("2027-01", "Data Science", "Estagiário"):
+                    continue
                 # outubro negativo, como no dado real
                 liq = -2.5 if mes == "2026-10" else (0.2 if ch == "Analytics Engineering" else 5.0)
                 linhas.append(dict(mes=mes, chapter=ch, senioridade=sen,
@@ -303,6 +306,15 @@ assert nov["oferta_ajustada"].sum() > 0, "oferta ajustada zerada"
 assert set(nov["farol_status"]) <= {"acelerar", "manter", "pausar", "sem_dado"}
 print(f"  farol nov/2026      : {dict(nov['farol_status'].value_counts())}")
 print(f"  oferta ajustada     : {nov['oferta_ajustada'].sum():.1f} (pipe x conversão, <= {app.HORIZONTE_FAROL_DIAS}d)")
+
+# a oferta é o pipe de hoje: não pode variar de mês para mês, mesmo quando
+# uma senioridade não tem linha de demanda naquele mês
+oferta_mes = app.farol_df.groupby(["chapter", "mes"])["oferta_ajustada"].sum().round(1).unstack()
+assert (oferta_mes.nunique(axis=1) == 1).all(), f"oferta variou entre meses:\n{oferta_mes}"
+falta = app.farol_df[(app.farol_df["mes"] == "2027-01") & (app.farol_df["chapter"] == "Data Science")
+                     & (app.farol_df["senioridade"] == "Estagiário")]
+assert len(falta) == 1 and falta.iloc[0]["demanda_liquida"] == 0, "linha sem demanda deveria valer zero"
+print("  oferta entre meses  : constante, mesmo sem linha de demanda")
 
 # chapters sem demanda não podem aparecer no farol
 assert not set(app.farol_df["chapter"]) & set(CHAPTERS_SEM_DEMANDA)

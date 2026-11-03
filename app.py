@@ -599,7 +599,8 @@ def load_data():
         f"SELECT * FROM {bq.tabela('vw_farol_demanda')}",
     )
 
-    mes_snap = str(pd.to_datetime(base["snapshot_date"].iloc[0]).strftime("%Y-%m"))
+    data_snap = pd.to_datetime(base["snapshot_date"].iloc[0])
+    mes_snap = data_snap.strftime("%Y-%m")
     label_snap = _rotulo_mes(mes_snap)
 
     # "Contratação" não é etapa viva: quem está lá entra pelo flag_contratado
@@ -709,7 +710,21 @@ def load_data():
         .groupby(["chapter", "senioridade"], as_index=False)
         .agg(oferta_ajustada=("contrib_oferta_ajustada", "sum"))
     )
-    farol = demanda.merge(oferta, on=["chapter", "senioridade"], how="left")
+    # Grade mês × chapter × senioridade: o forecast não tem linha quando não
+    # há demanda, e um merge direto faria a oferta dessa senioridade sumir
+    # do mês, mudando a oferta do chapter sem o pipe ter mudado. Sem linha
+    # vale demanda zero. Chapter sem demanda em mês nenhum continua fora.
+    combinacoes = pd.concat(
+        [
+            demanda[["chapter", "senioridade"]],
+            oferta.loc[oferta["chapter"].isin(demanda["chapter"]), ["chapter", "senioridade"]],
+        ]
+    ).drop_duplicates()
+    grade = demanda[["mes"]].drop_duplicates().merge(combinacoes, how="cross")
+    farol = grade.merge(demanda, on=["mes", "chapter", "senioridade"], how="left").merge(
+        oferta, on=["chapter", "senioridade"], how="left"
+    )
+    farol["demanda_liquida"] = farol["demanda_liquida"].fillna(0.0)
     farol["oferta_ajustada"] = farol["oferta_ajustada"].fillna(0.0).round(1)
     farol["gap"] = (farol["demanda_liquida"] - farol["oferta_ajustada"]).round(1)
     calculado = farol.apply(
@@ -719,12 +734,12 @@ def load_data():
     farol["gap_pct"] = [c[1] for c in calculado]
     farol["mes_label"] = farol["mes"].map(_rotulo_mes)
 
-    return farol, pipe, pipe_nivel, su_ofertas, su_banco, parados, taxas, mes_snap
+    return farol, pipe, pipe_nivel, su_ofertas, su_banco, parados, taxas, mes_snap, data_snap.strftime("%d/%m/%Y")
 
 
 try:
     (farol_df, pipe_df, pipe_nivel_df, su_ofertas_df, su_banco_df,
-     parados_df, taxas_df, MES_SNAPSHOT) = load_data()
+     parados_df, taxas_df, MES_SNAPSHOT, DATA_SNAPSHOT) = load_data()
 except Exception as e:  # noqa: BLE001 — qualquer falha de BigQuery/credencial
     _detalhe = str(e)
     # o erro de metadata server é o jeito do google-auth dizer "não achei
@@ -1210,8 +1225,9 @@ with tab_exec:
     )
 
     mes_sel0 = st.selectbox(
-        "Mês de referência", MESES, index=IDX_MES_PADRAO, format_func=lambda m: MES_LABELS[m], key="mes_exec"
+        "Mês da demanda", MESES, index=IDX_MES_PADRAO, format_func=lambda m: MES_LABELS[m], key="mes_exec"
     )
+    st.caption(f"📷 Pipe: foto de **{DATA_SNAPSHOT}** — não muda com o mês; só a demanda muda.")
     mes_ant0 = mes_anterior(mes_sel0)
 
     df_mes0 = farol_df[farol_df["mes"] == mes_sel0]
@@ -1304,8 +1320,9 @@ with tab_farol:
     )
 
     mes_sel = st.selectbox(
-        "Mês de referência", MESES, index=IDX_MES_PADRAO, format_func=lambda m: MES_LABELS[m], key="mes_farol"
+        "Mês da demanda", MESES, index=IDX_MES_PADRAO, format_func=lambda m: MES_LABELS[m], key="mes_farol"
     )
+    st.caption(f"📷 Pipe: foto de **{DATA_SNAPSHOT}** — não muda com o mês; só a demanda muda.")
 
     df_mes = farol_df[farol_df["mes"] == mes_sel]
 
@@ -1343,7 +1360,7 @@ with tab_farol:
     st.caption(
         "🟢 Acelerar = abrir vagas · 🟡 Manter = ritmo saudável · 🔴 Pausar = oferta acima da demanda. "
         "Passe o mouse sobre um card para o motivo do status, ou clique em **Ver detalhe** para a quebra por senioridade. "
-        "\"Pipe qualificado\" soma os candidatos deste chapter da Entrevista Fit até a Oferta, neste mês."
+        "\"Pipe qualificado\" soma os candidatos deste chapter da Entrevista Fit até a Oferta, na foto do pipe."
     )
     cols = st.columns(len(agg))
     if "chapter_sel" not in st.session_state:
@@ -1510,7 +1527,7 @@ with tab_pipe:
     mes_sel2 = MES_SNAPSHOT
     chapters_pipe = sorted(pipe_df["chapter"].unique())
     chapter_sel2 = st.selectbox("Chapter (funil e conversão)", chapters_pipe, key="chapter_pipe")
-    st.caption(f"📷 Foto do pipe em **{MES_LABELS[MES_SNAPSHOT]}** — o Greenhouse não guarda histórico por etapa.")
+    st.caption(f"📷 Pipe: foto de **{DATA_SNAPSHOT}** — o Greenhouse não guarda histórico por etapa.")
 
     dfp_mes = pipe_df[pipe_df["mes"] == mes_sel2]
     dfp_chapter = dfp_mes[dfp_mes["chapter"] == chapter_sel2].sort_values("ordem_etapa")
@@ -1841,21 +1858,21 @@ with tab_pipe:
         )
     else:
         etapas_parados = [e for e in STAGES_ORDER if e in set(parados_df["etapa"])]
-        metas_etapa = (
-            dfp_mes.dropna(subset=["meta_sla_dias"]).groupby("etapa")["meta_sla_dias"].max().to_dict()
-        )
+        # meta_sla_dias aqui é o prazo ACUMULADO até a etapa (ver load_data):
+        # é contra ele que os dias no pipe são comparados
+        prazos_etapa = parados_df.groupby("etapa")["meta_sla_dias"].max().to_dict()
         contagem_parados = parados_mes.groupby(["etapa", "status"]).size().to_dict()
         larguras = [1.45] + [1] * len(etapas_parados)
 
         cabecalho = st.columns(larguras)
         cabecalho[0].markdown('<div class="stage-th">Status</div>', unsafe_allow_html=True)
         for coluna, etapa_col in zip(cabecalho[1:], etapas_parados):
-            meta = metas_etapa.get(etapa_col)
+            prazo = prazos_etapa.get(etapa_col)
             nota = ""
-            if meta is not None and pd.notna(meta):
+            if prazo is not None and pd.notna(prazo):
                 nota = (
-                    f'<span class="th-note">Atenção: {int(meta) + 1}–{int(meta) + 5}d'
-                    f'<br>Crítico: &gt;{int(meta) + 5}d</span>'
+                    f'<span class="th-note">Atenção: {int(prazo) + 1}–{int(prazo) + 5}d no pipe'
+                    f'<br>Crítico: &gt;{int(prazo) + 5}d no pipe</span>'
                 )
             coluna.markdown(f'<div class="stage-th">{etapa_col}{nota}</div>', unsafe_allow_html=True)
 
@@ -1887,9 +1904,9 @@ with tab_pipe:
         st.markdown(
             f'<div class="legend-row">'
             f'<div class="legend-item"><span class="legend-dot" style="background:{AMBER}"></span>'
-            f"Atenção — passou da meta de SLA da etapa</div>"
+            f"Atenção — dias no pipe acima da soma das metas até a etapa</div>"
             f'<div class="legend-item"><span class="legend-dot" style="background:{RED}"></span>'
-            f"Crítico — mais de 5 dias acima da meta</div>"
+            f"Crítico — mais de 5 dias acima dessa soma</div>"
             f"</div>",
             unsafe_allow_html=True,
         )

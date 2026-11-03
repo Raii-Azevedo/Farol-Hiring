@@ -43,35 +43,39 @@ WITH
 -- pipeline default em inglês em vagas nunca configuradas). Sem isso, um
 -- join por string derruba volume em silêncio.
 -- As metas de SLA são regra de negócio (STF/RH), não dado — estão aqui
--- como ponto único de ajuste.
+-- como ponto único de ajuste. Duas colunas de propósito:
+--   meta_sla_dias      alimenta Gargalos e SLA e Candidatos parados.
+--   teto_projecao_dias limita o tempo por etapa na projeção da oferta
+--                      ajustada (farol). Separada para rever a meta sem
+--                      mudar o farol sem querer.
 -- ---------------------------------------------------------------------
 etapa_depara AS (
   SELECT * FROM UNNEST([
-    STRUCT('Avaliação de currículo'  AS stage_name, 'Avaliação de currículo'  AS etapa, 1 AS ordem_etapa, 'funil'     AS tipo_etapa, 2 AS meta_sla_dias),
-    STRUCT('Curriculo selecionado',                 'Avaliação de currículo',       1,  'funil',     2),
-    STRUCT('Application Review',                    'Avaliação de currículo',       1,  'funil',     2),
-    STRUCT('Envio do Case Escrito',                 'Envio do Case Escrito',        2,  'funil',     3),
-    STRUCT('Avaliação case escrito',                'Avaliação case escrito',       3,  'funil',     3),
-    STRUCT('Entrevista Fit',                        'Entrevista Fit',               4,  'funil',     3),
-    STRUCT('Entrevista Técnica 1',                  'Entrevista Técnica 1',         5,  'funil',     5),
-    STRUCT('Entrevista Técnica 2',                  'Entrevista Técnica 2',         6,  'funil',     5),
+    STRUCT('Avaliação de currículo'  AS stage_name, 'Avaliação de currículo'  AS etapa, 1 AS ordem_etapa, 'funil'     AS tipo_etapa, 30 AS meta_sla_dias, 2 AS teto_projecao_dias),
+    STRUCT('Curriculo selecionado',                 'Avaliação de currículo',       1,  'funil',     30, 2),
+    STRUCT('Application Review',                    'Avaliação de currículo',       1,  'funil',     30, 2),
+    STRUCT('Envio do Case Escrito',                 'Envio do Case Escrito',        2,  'funil',      3, 3),
+    STRUCT('Avaliação case escrito',                'Avaliação case escrito',       3,  'funil',      3, 3),
+    STRUCT('Entrevista Fit',                        'Entrevista Fit',               4,  'funil',     20, 3),
+    STRUCT('Entrevista Técnica 1',                  'Entrevista Técnica 1',         5,  'funil',     10, 5),
+    STRUCT('Entrevista Técnica 2',                  'Entrevista Técnica 2',         6,  'funil',      7, 5),
     -- mesma etapa, três nomes. Canonizada sem nome de pessoa: se o André
     -- ou a Marina saírem do processo, o dashboard não quebra.
-    STRUCT('Conversa com André',                    'Conversa Final',               7,  'funil',     4),
-    STRUCT('Conversa Final',                        'Conversa Final',               7,  'funil',     4),
-    STRUCT('Conversa com a Marina',                 'Conversa Final',               7,  'funil',     4),
-    STRUCT('Offer',                                 'Oferta',                       8,  'funil',     3),
+    STRUCT('Conversa com André',                    'Conversa Final',               7,  'funil',      7, 4),
+    STRUCT('Conversa Final',                        'Conversa Final',               7,  'funil',      7, 4),
+    STRUCT('Conversa com a Marina',                 'Conversa Final',               7,  'funil',      7, 4),
+    STRUCT('Offer',                                 'Oferta',                       8,  'funil',      7, 3),
     -- backlog paralelo, não é etapa do funil
-    STRUCT('See you soon',                          'See You Soon',              NULL,  'paralelo', NULL),
-    STRUCT('See you Soon',                          'See You Soon',              NULL,  'paralelo', NULL),
+    STRUCT('See you soon',                          'See You Soon',              NULL,  'paralelo', NULL, NULL),
+    STRUCT('See you Soon',                          'See You Soon',              NULL,  'paralelo', NULL, NULL),
     -- pipeline default do Greenhouse, em vagas nunca configuradas com o
     -- processo da Artefact: 70 candidaturas (0,10%). Ficam fora do funil
     -- até o RH dizer se 'Interview #3' é Técnica 2 ou Conversa Final.
-    STRUCT('Interview #1', NULL, NULL, 'fora', NULL),
-    STRUCT('Interview #2', NULL, NULL, 'fora', NULL),
-    STRUCT('Interview #3', NULL, NULL, 'fora', NULL),
-    STRUCT('Interview #4', NULL, NULL, 'fora', NULL),
-    STRUCT('Interview #5', NULL, NULL, 'fora', NULL)
+    STRUCT('Interview #1', NULL, NULL, 'fora', NULL, NULL),
+    STRUCT('Interview #2', NULL, NULL, 'fora', NULL, NULL),
+    STRUCT('Interview #3', NULL, NULL, 'fora', NULL, NULL),
+    STRUCT('Interview #4', NULL, NULL, 'fora', NULL, NULL),
+    STRUCT('Interview #5', NULL, NULL, 'fora', NULL, NULL)
   ])
 ),
 
@@ -169,19 +173,19 @@ conversao_etapa AS (
   GROUP BY 1, 2
 ),
 -- Quantos dias era "esperado" que o candidato já tivesse gasto para estar
--- na etapa em que está: soma acumulada do tempo médio das etapas
--- anteriores daquela vaga. Base do proxy de "candidato parado".
+-- na etapa em que está: soma acumulada das METAS de SLA até esta etapa.
+-- Base do proxy de "candidato parado". Usa a meta, e não o tempo médio
+-- da vaga, porque a média inflada escondia quem estava atrasado.
 esperado AS (
-  SELECT job_name, etapa,
-         SUM(tempo_medio_dias) OVER (
-           PARTITION BY job_name ORDER BY ordem
+  SELECT etapa,
+         SUM(meta_sla_dias) OVER (
+           ORDER BY ordem_etapa
            ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
          ) AS dias_esperados_ate_etapa
   FROM (
-    SELECT te.job_name, te.etapa, MAX(e.ordem_etapa) AS ordem, MAX(te.tempo_medio_dias) AS tempo_medio_dias
-    FROM tempo_etapa te
-    JOIN etapa_depara e ON e.etapa = te.etapa
-    GROUP BY 1, 2
+    SELECT DISTINCT etapa, ordem_etapa, meta_sla_dias
+    FROM etapa_depara
+    WHERE tipo_etapa = 'funil'
   )
 ),
 
@@ -197,6 +201,12 @@ esperado AS (
 --   - etapa sem conversão no dado = assume nenhuma perda (otimista);
 --   - conta o tempo CHEIO da etapa atual, como se o candidato tivesse
 --     acabado de entrar nela (conservador no prazo).
+--
+-- O tempo de cada etapa é LIMITADO por teto_projecao_dias. O average_days_in_stage
+-- do Greenhouse vem inflado (soma ~150 dias da Oferta à contratação), o
+-- que deixava todo candidato fora do horizonte de 45 dias e zerava a
+-- oferta ajustada de todos os chapters. Com o teto, a projeção usa o
+-- ritmo esperado do processo, não o histórico de quem ficou parado.
 -- ---------------------------------------------------------------------
 projecao AS (
   SELECT
@@ -210,8 +220,10 @@ projecao AS (
   FROM (
     SELECT te.job_name, te.etapa,
            MAX(e.ordem_etapa)        AS ordem_etapa,
-           MAX(te.tempo_medio_dias)  AS tempo,
-           MAX(ce.conversao_pct)/100 AS taxa
+           LEAST(MAX(te.tempo_medio_dias), MAX(e.teto_projecao_dias)) AS tempo,
+           -- conversion_rate do Greenhouse chega a 15 (1500%); probabilidade
+           -- acima de 1 não existe e inflava a oferta. Teto em 100%.
+           LEAST(MAX(ce.conversao_pct)/100, 1.0) AS taxa
     FROM tempo_etapa te
     JOIN etapa_depara e ON e.etapa = te.etapa
     LEFT JOIN conversao_etapa ce ON ce.job_name = te.job_name AND ce.etapa = te.etapa
@@ -315,7 +327,9 @@ SELECT
   ROUND(es.dias_esperados_ate_etapa, 1)       AS dias_esperados_ate_etapa,
   ROUND(a.total_days_in_pipe - es.dias_esperados_ate_etapa, 1) AS dias_acima_do_esperado,
   CASE
-    WHEN es.dias_esperados_ate_etapa IS NULL THEN NULL
+    -- total_days_in_pipe vem NULL para quase todo mundo em processo na
+    -- Avaliação de currículo: é "sem dado", não "em dia".
+    WHEN es.dias_esperados_ate_etapa IS NULL OR a.total_days_in_pipe IS NULL THEN NULL
     WHEN a.total_days_in_pipe > es.dias_esperados_ate_etapa + 5 THEN 'critico'
     WHEN a.total_days_in_pipe > es.dias_esperados_ate_etapa     THEN 'atencao'
     ELSE 'ok'
@@ -328,7 +342,10 @@ SELECT
   -- SOMAR isto por chapter/senioridade = oferta ajustada por conversão.
   -- Para ajustar também por TEMPO, filtrar antes por dias_ate_contratacao
   -- <= horizonte do farol (~45 dias).
-  ROUND(IF(LOWER(a.application_status) = 'in_process',
+  -- Só conta a partir do Envio do Case (ordem 2): a maioria é descartada
+  -- na Avaliação de currículo, e os ~10 mil candidatos parados nessa etapa
+  -- dominariam a oferta (552 contratações projetadas, contra 50 no histórico).
+  ROUND(IF(LOWER(a.application_status) = 'in_process' AND e.ordem_etapa >= 2,
            pr.prob_contratacao, 0), 3)        AS contrib_oferta_ajustada,
 
   -- ---- métricas da vaga. MÉDIA sim; SOMA só após ANY_VALUE. ------
@@ -343,7 +360,7 @@ LEFT JOIN vaga              v  ON v.job_id    = a.job_id
 LEFT JOIN etapa_depara      e  ON e.stage_name = a.stage_name
 LEFT JOIN tempo_etapa       te ON te.job_name = v.job_name AND te.etapa = e.etapa
 LEFT JOIN conversao_etapa   ce ON ce.job_name = v.job_name AND ce.etapa = e.etapa
-LEFT JOIN esperado          es ON es.job_name = v.job_name AND es.etapa = e.etapa
+LEFT JOIN esperado          es ON es.etapa = e.etapa
 LEFT JOIN projecao          pr ON pr.job_name = v.job_name AND pr.etapa = e.etapa
 LEFT JOIN tempo_contratacao tc ON tc.job_name = v.job_name
 LEFT JOIN su_vaga           su ON su.job_name = v.job_name;
