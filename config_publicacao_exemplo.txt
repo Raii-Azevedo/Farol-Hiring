@@ -1,0 +1,170 @@
+FAROL DE HIRING - EXEMPLOS DE CONFIGURAÇÃO PARA PUBLICAR
+========================================================
+
+Tudo aqui é exemplo: troque os valores entre <...>. Este arquivo não tem
+nenhum segredo real e nunca deve receber um.
+
+Dados do ambiente:
+  Projeto GCP ....... br-in-dataplatform
+  Dataset ........... greenhouse_dev (região us-central1)
+  Conta de exemplo .. farol-hiring@br-in-dataplatform.iam.gserviceaccount.com
+
+
+1. HOSPEDAGEM
+-------------
+Precisamos definir onde o app roda. O endereço final entra no item 3.
+
+Endereço de exemplo:
+  https://farol-hiring.artefact.com
+
+Comando para iniciar o app (Python 3.10+):
+  pip install -r requirements.txt
+  streamlit run app.py --server.port=8501 --server.address=0.0.0.0
+
+O servidor precisa aceitar WebSocket, que o Streamlit usa.
+O repositório ainda não tem Dockerfile. Se a hospedagem exigir um, ele
+precisa ser criado.
+
+
+2. SERVICE ACCOUNT
+------------------
+Criar a conta:
+
+  gcloud iam service-accounts create farol-hiring \
+    --project=br-in-dataplatform \
+    --display-name="Farol de Hiring (leitura)"
+
+Leitura no dataset INTEIRO (rodar no console do BigQuery). Se for só nas
+views do farol, o app não lê a lista de acesso e bloqueia todo mundo:
+
+  GRANT `roles/bigquery.dataViewer`
+  ON SCHEMA `br-in-dataplatform.greenhouse_dev`
+  TO "serviceAccount:farol-hiring@br-in-dataplatform.iam.gserviceaccount.com";
+
+Executar queries no projeto (sem isso, enxerga as views mas não roda nada):
+
+  gcloud projects add-iam-policy-binding br-in-dataplatform \
+    --member="serviceAccount:farol-hiring@br-in-dataplatform.iam.gserviceaccount.com" \
+    --role="roles/bigquery.jobUser"
+
+Download rápido (sem isso, o app funciona, mas fica mais lento):
+
+  gcloud projects add-iam-policy-binding br-in-dataplatform \
+    --member="serviceAccount:farol-hiring@br-in-dataplatform.iam.gserviceaccount.com" \
+    --role="roles/bigquery.readSessionUser"
+
+Leitura dos CSVs de demanda no Cloud Storage. As tabelas
+f_resource_request_manual e f_staffing_rate_manual são externas e leem de
+gs://idp-bucket-dev/in/greenhouse/manual_push/. Sem isso, a vw_farol_demanda
+falha e o app não abre:
+
+  gcloud storage buckets add-iam-policy-binding gs://idp-bucket-dev \
+    --member="serviceAccount:farol-hiring@br-in-dataplatform.iam.gserviceaccount.com" \
+    --role="roles/storage.objectViewer"
+
+  Esse comando libera o bucket inteiro. Se preferir restringir à pasta
+  manual_push, use uma condição de IAM.
+
+Gerar a chave (o JSON vai para o item 4; não commitar):
+
+  gcloud iam service-accounts keys create farol-sa.json \
+    --iam-account=farol-hiring@br-in-dataplatform.iam.gserviceaccount.com
+
+
+3. LOGIN COM GOOGLE (OAUTH)
+---------------------------
+Em https://console.cloud.google.com/auth/overview :
+
+  Tipo do cliente ............ Web application
+  Nome ....................... Farol de Hiring
+  Authorized redirect URIs ... https://farol-hiring.artefact.com/oauth2callback
+                               http://localhost:8501/oauth2callback  (teste local)
+
+O redirect URI precisa ser idêntico ao do item 4, inclusive https e barras.
+Com a tela de consentimento em modo de teste, adicione os e-mails em "Audience".
+
+Gerar o cookie_secret:
+
+  python -c "import secrets; print(secrets.token_hex(32))"
+
+
+4. SEGREDOS (.streamlit/secrets.toml)
+-------------------------------------
+Vão nas configurações de segredos da hospedagem, nunca no Git.
+Os campos de [gcp_service_account] vêm do JSON gerado no item 2.
+A private_key fica em UMA linha, com os \n literais, como vem no JSON.
+
+--- início do secrets.toml ---
+[gcp_service_account]
+type                        = "service_account"
+project_id                  = "br-in-dataplatform"
+private_key_id              = "<private_key_id do JSON>"
+private_key                 = "-----BEGIN PRIVATE KEY-----\n<chave>\n-----END PRIVATE KEY-----\n"
+client_email                = "farol-hiring@br-in-dataplatform.iam.gserviceaccount.com"
+client_id                   = "<client_id do JSON>"
+auth_uri                    = "https://accounts.google.com/o/oauth2/auth"
+token_uri                   = "https://oauth2.googleapis.com/token"
+auth_provider_x509_cert_url = "https://www.googleapis.com/oauth2/v1/certs"
+client_x509_cert_url        = "<client_x509_cert_url do JSON>"
+
+[auth]
+redirect_uri        = "https://farol-hiring.artefact.com/oauth2callback"
+cookie_secret       = "<resultado do comando do item 3>"
+client_id           = "<id>.apps.googleusercontent.com"
+client_secret       = "<client secret do OAuth>"
+server_metadata_url = "https://accounts.google.com/.well-known/openid-configuration"
+--- fim do secrets.toml ---
+
+ATENÇÃO: sem a seção [auth], o app roda aberto e qualquer pessoa com o link
+vê nomes de candidatos. Só dê o link depois de confirmar que a tela de login
+aparece.
+
+
+5. LISTA DE ACESSO
+------------------
+A tabela greenhouse_dash_access já existe e já tem linhas. Os papéis em uso
+são DEV, RH e STAFFING. Para liberar alguém:
+
+  INSERT INTO `br-in-dataplatform.greenhouse_dev.greenhouse_dash_access`
+    (email, role, created_at)
+  VALUES
+    ('<pessoa>@artefact.com', 'RH', CURRENT_TIMESTAMP());
+
+Para revogar, apague a linha:
+
+  DELETE FROM `br-in-dataplatform.greenhouse_dev.greenhouse_dash_access`
+  WHERE LOWER(TRIM(email)) = '<pessoa>@artefact.com';
+
+Mudanças valem em até 1 minuto, sem novo deploy.
+
+
+6. OPCIONAL: SNAPSHOT DIÁRIO
+----------------------------
+Cria o histórico mensal; os dias sem gravação não dão para recuperar depois.
+A tabela guarda nomes de candidatos, então restrinja quem pode lê-la.
+
+Rodar uma vez, para criar a tabela:
+
+  CREATE TABLE IF NOT EXISTS `br-in-dataplatform.greenhouse_dev.f_farol_base_snapshot`
+  PARTITION BY snapshot_date AS
+  SELECT * FROM `br-in-dataplatform.greenhouse_dev.vw_farol_base` WHERE FALSE;
+
+Query agendada (Scheduled Query, uma vez por dia, região us-central1):
+
+  INSERT INTO `br-in-dataplatform.greenhouse_dev.f_farol_base_snapshot`
+  SELECT * FROM `br-in-dataplatform.greenhouse_dev.vw_farol_base`
+  WHERE NOT EXISTS (
+    SELECT 1 FROM `br-in-dataplatform.greenhouse_dev.f_farol_base_snapshot`
+    WHERE snapshot_date = CURRENT_DATE()
+  );
+
+A agendada precisa de uma conta com permissão de escrita. Não use a conta do
+app, que é só de leitura.
+
+
+COMO CONFERIR DEPOIS DE PUBLICAR
+--------------------------------
+[ ] Abrir o link em aba anônima: tem que aparecer a tela de login.
+[ ] Entrar com e-mail da lista: o dashboard abre, sem aviso de "modo aberto".
+[ ] Entrar com e-mail fora da lista: aparece "Acesso não autorizado".
+[ ] Abrir as três abas: Visão Gerencial, Farol Executivo e Visão do Pipe.

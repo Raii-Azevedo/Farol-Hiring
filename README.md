@@ -216,7 +216,9 @@ presente, não histórico), e os dados de demanda do lado Artefactory.
   credencial da máquina (`gcloud auth application-default login`), ele só
   funciona rodando local. Publicado, precisa de `[gcp_service_account]` no
   `secrets.toml`, com `roles/bigquery.dataViewer` no dataset `greenhouse_dev`
-  e `roles/bigquery.jobUser` no projeto.
+  `roles/bigquery.jobUser` no projeto e `roles/storage.objectViewer` no bucket
+  `gs://idp-bucket-dev`, de onde as tabelas de demanda leem os CSVs. Comandos
+  prontos em `config_publicacao_exemplo.txt`.
 - **Mapeamento job → chapter/senioridade** — deduzido do `job_name` dentro da
   `vw_farol_base` (código entre colchetes + palavra de nível). É heurística,
   não cadastro: job com nome fora do padrão fica sem chapter e sai do farol.
