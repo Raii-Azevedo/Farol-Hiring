@@ -198,7 +198,7 @@ agora pode não aparecer.
 
 **Senioridade vem de parse do `job_name`.** O padrão real é o código entre
 colchetes (`[DS BR] - Intern Data Scientist Brazil`), e os níveis
-observados são só três: **Estagiário, Pleno (sem marca) e Senior** — não
+observados são só três: **Estagiário, Entry (sem marca) e Senior** — não
 os quatro que o protótipo usa. O `SENIORIDADE_ORDER` do `app.py` precisa
 virar esses três.
 
@@ -218,21 +218,18 @@ mapeamento. O QA 2 monitora.
 ## Decisões de negócio embutidas no de-para da demanda
 
 O Artefactory e o Greenhouse falam vocabulários diferentes, e eu tive que
-inferir. Os três pontos abaixo mudam números do farol e precisam de
-ratificação — estão marcados `CONFIRMAR` no SQL:
+inferir. Os pontos abaixo mudam números do farol:
 
-1. **`Consulting` (Artefactory) = chapter `Data Consultant` (Greenhouse)?**
-   É a maior incerteza. Se não for, o chapter Data Consultant fica sem
-   demanda e o farol dele cai junto.
-2. **`Entry 1/2/3` e `Associate 2/3` = o "Pleno" do Greenhouse?** O
+1. **`Consulting` (Artefactory) = chapter `Data Consultant` (Greenhouse).**
+   Confirmado em 10/11/2026: é o mesmo chapter.
+2. **`Entry 1/2/3` e `Associate 2/3` = o nível Entry do Greenhouse.**
+   Confirmado em 10/11/2026 (o app chamava esse nível de "Pleno"). O
    Artefactory tem 16 níveis e o Greenhouse só permite deduzir 3 do
    `job_name`. Toda a quebra por senioridade depende disso.
 3. **FTE = pessoa?** A demanda vem em FTE fracionário (0,45; 12,68) e o
    pipe vem em gente. Somar os dois assume 1 FTE = 1 contratação.
 
-Enquanto o 1 e o 2 não forem ratificados, **o farol por chapter já é
-confiável** (o de-para de carreira é quase 1-para-1); a quebra por
-senioridade é que fica provisória.
+Só o 3 ainda precisa de ratificação.
 
 ## Ainda pendente de confirmação
 

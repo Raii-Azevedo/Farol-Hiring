@@ -17,7 +17,7 @@ CALLS = {"markdown": [], "captions": [], "button_keys": [], "plotly_keys": [], "
 
 CHAPTERS_COM_DEMANDA = ["Analytics Engineering", "Data Consultant", "Data Engineering", "Data Science"]
 CHAPTERS_SEM_DEMANDA = ["AI Engineering", "Software Engineering"]
-SENIORIDADES = ["Estagiário", "Pleno", "Senior"]
+SENIORIDADES = ["Estagiário", "Entry", "Senior"]
 ETAPAS = [
     ("Avaliação de currículo", 1, 2), ("Envio do Case Escrito", 2, 3),
     ("Avaliação case escrito", 3, 3), ("Entrevista Fit", 4, 3),

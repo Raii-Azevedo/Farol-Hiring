@@ -101,7 +101,35 @@ STAGES_ORDER = [
 
 # Níveis que dá para deduzir do job_name do Greenhouse. O Artefactory tem
 # 16 níveis; o de-para para estes três está na vw_farol_demanda.
-SENIORIDADE_ORDER = ["Estagiário", "Pleno", "Senior"]
+SENIORIDADE_ORDER = ["Estagiário", "Entry", "Senior"]
+# Vaga cujo nome não diz o nível: entra nos totais do pipe, nunca no farol.
+SEM_SENIORIDADE = "Não informada"
+# Senioridades que o farol trata como decisão de contratação. Estagiário
+# aparece só para acompanhamento: o programa de estágio tem outro ritmo
+# (turmas), e misturá-lo com Entry e Senior confundia a leitura na reunião.
+SENIORIDADES_FAROL = ["Entry", "Senior"]
+
+
+def resumo_pipe(df: pd.DataFrame, por: list) -> pd.DataFrame:
+    """Agrega o pipe (grão chapter × senioridade × etapa, com somas e
+    contagens) no nível pedido e refaz as médias ponderadas e o SLA."""
+    g = df.groupby(por, as_index=False).agg(
+        candidatos=("candidatos", "sum"),
+        conv_soma=("conv_soma", "sum"),
+        conv_n=("conv_n", "sum"),
+        tempo_soma=("tempo_soma", "sum"),
+        tempo_n=("tempo_n", "sum"),
+        meta_sla_dias=("meta_sla_dias", "max"),
+    )
+    g["conversao_pct"] = (g["conv_soma"] / g["conv_n"].where(g["conv_n"] > 0)).round(1)
+    g["tempo_medio_dias"] = (g["tempo_soma"] / g["tempo_n"].where(g["tempo_n"] > 0)).round(1)
+    if "etapa" in g:
+        g.loc[g["etapa"].eq("Contratação"), ["tempo_medio_dias", "meta_sla_dias"]] = None
+    g["excesso_dias"] = (g["tempo_medio_dias"] - g["meta_sla_dias"]).round(1)
+    g["status_sla"] = g["excesso_dias"].map(
+        lambda e: None if pd.isna(e) else ("critico" if e > 5 else ("atencao" if e > 0 else "ok"))
+    )
+    return g.drop(columns=["conv_soma", "conv_n", "tempo_soma", "tempo_n"])
 
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR
@@ -361,8 +389,137 @@ st.markdown(
         .farol-card .kpis b {{ color: {PAL['ink']}; }}
         .farol-card .aviso {{ font-size: 11.5px; font-weight: 700; margin-top: 8px; min-height: 18px; line-height: 1.5; }}
 
+        /* ---- matriz do farol: chapter × senioridade ---- */
+        .fm-wrap {{ overflow-x: auto; margin: 10px 0 8px; padding-bottom: 4px; }}
+        .fm-grid {{
+            display: grid; gap: 10px; align-items: stretch; min-width: 760px;
+            grid-template-columns: minmax(150px, 1.1fr) repeat(var(--fm-n), minmax(150px, 1fr)) minmax(140px, .9fr);
+        }}
+        .fm-th {{
+            font-size: 11.5px; font-weight: 700; color: {PAL['muted']}; text-transform: uppercase;
+            letter-spacing: .06em; text-align: center; align-self: end; padding-bottom: 2px;
+        }}
+        .fm-th span {{ display: block; font-weight: 400; text-transform: none; letter-spacing: 0; font-size: 11px; margin-top: 2px; }}
+        .fm-th-apagada {{ opacity: .6; }}
+        .fm-chapter {{
+            display: flex; align-items: center; font-weight: 700; font-size: 14px; color: {PAL['ink']};
+            line-height: 1.3; padding-right: 8px;
+        }}
+        .fm-card {{
+            position: relative; overflow: hidden;
+            background: linear-gradient(180deg, var(--fm-bg, transparent), transparent 140%), {PAL['surface']};
+            border: 1px solid {PAL['line']}; border-radius: 14px; padding: 12px 14px 12px 18px;
+            box-shadow: 0 2px 10px {PAL['shadow']};
+            transition: transform .15s ease, box-shadow .15s ease;
+        }}
+        .fm-card::before {{
+            content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; background: var(--fm-cor, transparent);
+        }}
+        .fm-card:hover {{ transform: translateY(-2px); box-shadow: 0 8px 18px {PAL['shadow_hover']}; }}
+        .fm-pill {{
+            display: inline-flex; align-items: center; gap: 6px; font-size: 10.5px; font-weight: 800;
+            letter-spacing: .08em; color: var(--fm-cor); text-transform: uppercase;
+        }}
+        .fm-dot {{ width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex: none; }}
+        .fm-gap {{ font-size: 19px; font-weight: 700; color: {PAL['ink']}; margin: 6px 0 2px; line-height: 1.2; }}
+        .fm-num {{ display: flex; flex-wrap: wrap; column-gap: 10px; font-size: 11.5px; color: {PAL['muted']}; }}
+        .fm-num span {{ white-space: nowrap; }}
+        .fm-orig {{ font-size: 10.5px; color: {PAL['muted']}; opacity: .8; margin-top: 3px; white-space: nowrap; }}
+        .fm-total-liq {{ border-top: 1px solid {PAL['line']}; padding-top: 3px; margin-top: 1px; }}
+        .fm-num b {{ color: {PAL['ink']}; font-weight: 600; font-family: 'Roboto Mono', monospace; }}
+        .fm-apagada {{ background: transparent; box-shadow: none; border-style: dashed; opacity: .7; }}
+        .fm-apagada .fm-mini {{
+            display: flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 600;
+            color: {PAL['muted']}; margin-bottom: 4px;
+        }}
+        .fm-vazia {{ background: transparent; box-shadow: none; border-style: dashed; display: flex; align-items: center; justify-content: center; }}
+        .fm-vazia-txt {{ font-size: 11.5px; color: {PAL['muted']}; }}
+        .fm-total {{
+            display: flex; flex-direction: column; justify-content: center; gap: 3px;
+            padding: 10px 4px 10px 14px; border-left: 1px solid {PAL['line']};
+        }}
+        .fm-total div {{ display: flex; justify-content: space-between; gap: 8px; font-size: 12px; }}
+        .fm-total span {{ color: {PAL['muted']}; }}
+        .fm-total b {{ color: {PAL['ink']}; font-family: 'Roboto Mono', monospace; font-weight: 600; }}
+
         /* ---- kpis executivos: cards de metrica agregada (aba Visao Gerencial) ---- */
         .exec-kpi-row {{ display: flex; gap: 14px; flex-wrap: wrap; margin: 4px 0 22px; }}
+        .exec-kpi-scope {{ font-size: 12.5px; color: {PAL['muted']}; margin: 6px 0 2px; }}
+        /* ---- aba Como ler ---- */
+        .cl-hero {{
+            background: linear-gradient(120deg, {MEDIUM_BLUE} 0%, #2B2F7A 55%, {PINK} 140%);
+            border-radius: 18px; padding: 26px 28px; margin: 4px 0 26px; color: #FFFFFF;
+        }}
+        .cl-hero-tit {{ font-size: 26px; font-weight: 800; margin-bottom: 8px; }}
+        .cl-hero-txt {{ font-size: 14px; line-height: 1.6; opacity: .88; max-width: 760px; }}
+        .cl-secao {{ display: flex; align-items: center; gap: 12px; margin: 30px 0 12px; }}
+        .cl-secao-ico {{
+            width: 38px; height: 38px; border-radius: 11px; display: flex; align-items: center; justify-content: center;
+            font-size: 19px; background: {PAL['surface2']}; border: 1px solid {PAL['line']}; flex: none;
+        }}
+        .cl-secao-tit {{ font-size: 19px; font-weight: 800; color: {PAL['ink']}; line-height: 1.2; }}
+        .cl-secao-sub {{ font-size: 12.5px; color: {PAL['muted']}; margin-top: 2px; }}
+        .cl-abas {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }}
+        .cl-aba {{
+            background: {PAL['surface']}; border: 1px solid {PAL['line']}; border-radius: 16px; padding: 18px;
+            box-shadow: 0 2px 10px {PAL['shadow']};
+        }}
+        .cl-aba-ico {{ font-size: 24px; margin-bottom: 8px; }}
+        .cl-aba-nome {{ font-size: 15px; font-weight: 800; color: {PAL['ink']}; }}
+        .cl-aba-perg {{ font-size: 13.5px; font-weight: 600; color: {PINK}; margin: 6px 0 8px; line-height: 1.45; }}
+        .cl-aba-txt {{ font-size: 12.5px; color: {PAL['muted']}; line-height: 1.55; margin-top: 4px; }}
+        .cl-aba-txt b {{ color: {PAL['ink']}; }}
+        .cl-fonte-tag {{
+            display: inline-block; font-size: 10.5px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase;
+            color: {PAL['muted']}; border: 1px solid {PAL['line']}; border-radius: 20px; padding: 2px 9px; margin-bottom: 8px;
+        }}
+        .cl-regras {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; margin-bottom: 14px; }}
+        .cl-regra {{
+            position: relative; border-radius: 14px; padding: 14px 14px 12px; border: 1px solid {PAL['line']};
+            background: linear-gradient(180deg, var(--cl-bg), transparent 160%), {PAL['surface']};
+        }}
+        .cl-regra-n {{
+            font-size: 11px; font-weight: 800; color: {PAL['muted']}; width: 22px; height: 22px; border-radius: 50%;
+            border: 1px solid {PAL['line']}; display: flex; align-items: center; justify-content: center; margin-bottom: 8px;
+        }}
+        .cl-regra-cond {{ font-size: 13px; color: {PAL['ink']}; line-height: 1.4; min-height: 36px; }}
+        .cl-regra-res {{
+            display: flex; align-items: center; gap: 6px; margin-top: 10px; font-size: 11.5px; font-weight: 800;
+            letter-spacing: .08em; text-transform: uppercase; color: var(--cl-cor);
+        }}
+        .cl-dot {{ width: 8px; height: 8px; border-radius: 50%; background: var(--cl-cor); display: inline-block; }}
+        .cl-lista {{
+            background: {PAL['surface']}; border: 1px solid {PAL['line']}; border-radius: 16px; overflow: hidden;
+            box-shadow: 0 2px 10px {PAL['shadow']};
+        }}
+        .cl-termo {{ display: grid; grid-template-columns: 230px 1fr; gap: 18px; padding: 14px 20px; }}
+        .cl-termo + .cl-termo {{ border-top: 1px solid {PAL['line']}; }}
+        .cl-termo-nome {{ font-size: 13.5px; font-weight: 700; color: {PAL['ink']}; }}
+        .cl-termo-def {{ font-size: 13px; color: {PAL['muted']}; line-height: 1.6; }}
+        .cl-termo-def b {{ color: {PAL['ink']}; }}
+        @media (max-width: 700px) {{ .cl-termo {{ grid-template-columns: 1fr; gap: 4px; }} }}
+        .cl-metas {{ display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; margin-bottom: 14px; }}
+        .cl-meta {{
+            flex: 1 0 96px; text-align: center; background: {PAL['surface']}; border: 1px solid {PAL['line']};
+            border-radius: 12px; padding: 10px 8px; position: relative;
+        }}
+        .cl-meta-d {{ font-family: 'Roboto Mono', monospace; font-weight: 700; font-size: 18px; color: {PAL['ink']}; }}
+        .cl-meta-e {{ font-size: 11px; color: {PAL['muted']}; margin-top: 2px; line-height: 1.3; }}
+        .cl-limites {{ display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-bottom: 8px; }}
+        @media (max-width: 700px) {{ .cl-limites {{ grid-template-columns: 1fr; }} }}
+        .cl-limite {{
+            border-radius: 14px; padding: 16px 18px; border: 1px solid {PAL['line']}; border-left: 4px solid {AMBER};
+            background: {STATUS_BG['manter']};
+        }}
+        .cl-limite-tit {{ font-size: 14px; font-weight: 800; color: {PAL['ink']}; margin-bottom: 6px; }}
+        .cl-limite-txt {{ font-size: 12.5px; color: {PAL['muted']}; line-height: 1.55; }}
+        .triagem-row {{ display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 2px 0 10px; }}
+        .triagem-lbl {{ font-size: 11.5px; font-weight: 700; color: {PAL['muted']}; text-transform: uppercase; letter-spacing: .05em; margin-right: 4px; }}
+        .triagem-chip {{
+            font-size: 12px; color: {PAL['muted']}; border: 1px dashed {PAL['line']}; border-radius: 20px; padding: 3px 10px;
+        }}
+        .triagem-chip b {{ color: {PAL['ink']}; font-family: 'Roboto Mono', monospace; font-weight: 600; margin-left: 4px; }}
+        .exec-kpi-scope b {{ color: {PAL['ink']}; }}
         .exec-kpi-card {{
             flex: 1 1 200px; background: {PAL['surface']}; border: 1px solid {PAL['line']}; border-radius: 14px;
             padding: 16px 18px; box-shadow: 0 2px 10px {PAL['shadow']};
@@ -609,40 +766,35 @@ def load_data():
     base["conta_funil"] = base["flag_ativo"].where(
         ~base["etapa"].eq("Contratação"), base["flag_contratado"]
     )
-    funil = base[base["tipo_etapa"].eq("funil") & base["chapter"].notna()]
+    # vaga sem senioridade no nome continua contando, num grupo próprio, para
+    # o total com "Todas" bater com o total sem filtro
+    # "Pleno" virou "Entry" (nov/2026). O replace deixa o app certo mesmo
+    # antes de as views serem recriadas com o nome novo.
+    base["senioridade"] = base["senioridade"].replace({"Pleno": "Entry"}).fillna(SEM_SENIORIDADE)
+    demanda["senioridade"] = demanda["senioridade"].replace({"Pleno": "Entry"})
+    funil = base[base["tipo_etapa"].eq("funil") & base["chapter"].notna()].copy()
+    funil["conv_n"] = funil["conversao_etapa_pct"].notna().astype(int)
+    funil["tempo_n"] = funil["tempo_medio_etapa"].notna().astype(int)
 
-    # ---- funil por chapter × etapa -------------------------------------
-    # a média de conversão e de tempo sai PONDERADA porque o grão da view é
-    # a candidatura: cada linha já é um candidato daquela vaga/etapa
-    pipe = (
-        funil.groupby(["chapter", "etapa", "ordem_etapa"], as_index=False)
+    # ---- funil por chapter × senioridade × etapa ----------------------
+    # Guarda SOMA e CONTAGEM em vez da média: assim qualquer recorte (um
+    # chapter, uma senioridade, tudo) refaz a média ponderada certa em
+    # resumo_pipe(). O grão da view é a candidatura, então a média já sai
+    # ponderada pelo número de candidaturas de cada vaga.
+    pipe_nivel = (
+        funil.groupby(["chapter", "senioridade", "etapa", "ordem_etapa"], as_index=False)
         .agg(
             candidatos=("conta_funil", "sum"),
-            conversao_pct=("conversao_etapa_pct", "mean"),
-            tempo_medio_dias=("tempo_medio_etapa", "mean"),
+            conv_soma=("conversao_etapa_pct", "sum"),
+            conv_n=("conv_n", "sum"),
+            tempo_soma=("tempo_medio_etapa", "sum"),
+            tempo_n=("tempo_n", "sum"),
             meta_sla_dias=("meta_sla_etapa", "max"),
         )
     )
-    pipe.loc[pipe["etapa"].eq("Contratação"), ["tempo_medio_dias", "meta_sla_dias"]] = None
-    pipe["mes"], pipe["mes_label"] = mes_snap, label_snap
-    pipe["conversao_pct"] = pipe["conversao_pct"].round(1)
-    pipe["tempo_medio_dias"] = pipe["tempo_medio_dias"].round(1)
-    pipe["excesso_dias"] = (pipe["tempo_medio_dias"] - pipe["meta_sla_dias"]).round(1)
-
-    def _status_sla(excesso):
-        if pd.isna(excesso):
-            return None
-        return "critico" if excesso > 5 else ("atencao" if excesso > 0 else "ok")
-
-    pipe["status_sla"] = pipe["excesso_dias"].map(_status_sla)
-
-    # ---- volume por senioridade ----------------------------------------
-    pipe_nivel = (
-        funil[funil["senioridade"].notna()]
-        .groupby(["chapter", "senioridade", "etapa", "ordem_etapa"], as_index=False)
-        .agg(candidatos=("conta_funil", "sum"))
-    )
     pipe_nivel["mes"], pipe_nivel["mes_label"] = mes_snap, label_snap
+    pipe = resumo_pipe(pipe_nivel, ["chapter", "etapa", "ordem_etapa"])
+    pipe["mes"], pipe["mes_label"] = mes_snap, label_snap
 
     # ---- taxas de oferta e conversão ------------------------------------
     # Saem dos flags, não da contagem por etapa: "Oferta" no funil é quem
@@ -657,11 +809,19 @@ def load_data():
     ).astype(int)
     # dias no pipe só de quem foi contratado: é o tempo real de contratação
     base["dias_contratacao"] = base["total_days_in_pipe"].where(base["flag_contratado"].eq(1))
+    # Quem CHEGOU a uma etapa: a linha guarda a etapa onde a candidatura
+    # está ou onde foi reprovada, e o contratado fica na ordem 9. Então
+    # ordem_etapa >= N é "passou por N". Serve para a conversão começar
+    # numa etapa escolhida, sem o volume da triagem de currículo.
+    base["chegou_case"] = base["ordem_etapa"].ge(2).fillna(False).astype(int)
+    base["chegou_fit"] = base["ordem_etapa"].ge(4).fillna(False).astype(int)
     taxas = (
         base[base["chapter"].notna()]
-        .groupby("chapter", as_index=False)
+        .groupby(["chapter", "senioridade"], as_index=False)
         .agg(
             candidaturas=("application_id", "count"),
+            chegaram_case=("chegou_case", "sum"),
+            chegaram_fit=("chegou_fit", "sum"),
             contratados=("flag_contratado", "sum"),
             recusas_oferta=("flag_recusa_oferta", "sum"),
             dias_contratacao=("dias_contratacao", "sum"),
@@ -693,7 +853,7 @@ def load_data():
     por_vaga = base.drop_duplicates("job_id")
     su_ofertas = (
         por_vaga[por_vaga["chapter"].notna()]
-        .groupby("chapter", as_index=False)
+        .groupby(["chapter", "senioridade"], as_index=False)
         .agg(candidaturas_sys=("su_candidaturas_vaga", "sum"), aceites_sys=("su_aceites_vaga", "sum"))
     )
     su_ofertas["mes"], su_ofertas["mes_label"] = mes_snap, label_snap
@@ -711,6 +871,8 @@ def load_data():
             base["flag_ativo"].eq(1)
             & base["dias_ate_contratacao"].le(HORIZONTE_FAROL_DIAS)
             & base["chapter"].notna()
+            # sem senioridade não casa com nenhuma linha de demanda
+            & base["senioridade"].ne(SEM_SENIORIDADE)
         ]
         .groupby(["chapter", "senioridade"], as_index=False)
         .agg(oferta_ajustada=("contrib_oferta_ajustada", "sum"))
@@ -730,6 +892,11 @@ def load_data():
         oferta, on=["chapter", "senioridade"], how="left"
     )
     farol["demanda_liquida"] = farol["demanda_liquida"].fillna(0.0)
+    # Pedido dos projetos e desalocações ficam visíveis na tela: a demanda
+    # líquida já desconta quem sai de projeto e pode ser realocado, e quem
+    # decide precisa ver de onde veio o número antes de abrir vaga.
+    for col in ("demanda_bruta_fte", "desalocado_fte"):
+        farol[col] = farol[col].fillna(0.0) if col in farol else 0.0
     farol["oferta_ajustada"] = farol["oferta_ajustada"].fillna(0.0).round(1)
     farol["gap"] = (farol["demanda_liquida"] - farol["oferta_ajustada"]).round(1)
     calculado = farol.apply(
@@ -776,13 +943,13 @@ except Exception as e:  # noqa: BLE001 — qualquer falha de BigQuery/credencial
         st.error(
             "**Não há credencial do Google configurada nesta máquina.**\n\n"
             "O erro de *metadata server* abaixo é o google-auth tentando o último "
-            "recurso, que só existe dentro do GCP — não é problema de rede.\n\n"
+            "recurso, que só existe dentro do GCP. Não é problema de rede.\n\n"
             "Duas formas de resolver, qualquer uma serve:\n\n"
             "1. **Na sua máquina:** `gcloud auth application-default login` "
             "(precisa do Google Cloud SDK instalado).\n"
             "2. **Sem gcloud, ou para publicar o app:** peça uma service account "
             "com leitura no dataset e cole o JSON dela em "
-            "`.streamlit/secrets.toml`, sob `[gcp_service_account]` — o modelo "
+            "`.streamlit/secrets.toml`, sob `[gcp_service_account]`. O modelo "
             "está em `.streamlit/secrets.toml.example`.\n\n"
             f"Detalhe técnico: {e}"
         )
@@ -825,7 +992,7 @@ IDX_MES_PADRAO = MESES.index(_proximo) if _proximo in MESES else 0
 # pipe mas não têm demanda cadastrada (esses não têm farol).
 _sem_demanda = sorted(set(pipe_df["chapter"].dropna()) - set(farol_df["chapter"].dropna()))
 _aviso = (
-    f"Dados oficiais do BigQuery. Pipe: foto de <b>{MES_LABELS[MES_SNAPSHOT]}</b> — nenhuma "
+    f"Dados oficiais do BigQuery. Pipe: foto de <b>{MES_LABELS[MES_SNAPSHOT]}</b>. Nenhuma "
     "view do Greenhouse tem data, então o funil não tem histórico. Demanda: forecast de "
     f"<b>{MES_LABELS[MESES[0]]}</b> a <b>{MES_LABELS[MESES[-1]]}</b> (mês atual + {JANELA_MESES}; "
     f"o Artefactory projeta até {_rotulo_mes(_FIM_FORECAST)}, mas comparar o pipe de hoje com "
@@ -833,7 +1000,7 @@ _aviso = (
 )
 if _sem_demanda:
     _aviso += (
-        f" Sem demanda cadastrada no Artefactory: <b>{', '.join(_sem_demanda)}</b> — "
+        f" Sem demanda cadastrada no Artefactory: <b>{', '.join(_sem_demanda)}</b>: "
         "esses chapters aparecem no funil, mas não têm farol."
     )
 render_note(_aviso, variant="neutral")
@@ -869,7 +1036,7 @@ def farol_insight(status: str, gap_pct, demanda: float, oferta: float) -> str:
     """Frase curta de leitura/ação por trás do status — a 'inteligência' por
     trás do número puro, mostrada no hover do card."""
     if status == "sem_dado":
-        return "Sem demanda registrada neste período — dado insuficiente para calcular o farol deste chapter."
+        return "Sem demanda registrada neste período, então não dá para calcular o farol."
     if status == "acelerar":
         return (
             f"Oferta cobre {oferta / demanda * 100:.0f}% da demanda "
@@ -878,7 +1045,7 @@ def farol_insight(status: str, gap_pct, demanda: float, oferta: float) -> str:
     if status == "manter":
         if abs(demanda - oferta) < GAP_MINIMO_PESSOAS:
             return (
-                f"Diferença de {demanda - oferta:+.1f} pessoa entre demanda e oferta — menos de uma vaga. "
+                f"Diferença de {demanda - oferta:+.1f} pessoa entre demanda e oferta, menos de uma vaga. "
                 "Mantenha o ritmo atual de contratação."
             )
         return (
@@ -908,6 +1075,18 @@ QUALIFIED_STAGES = [
 ]
 
 
+TODOS = "Todos"
+
+
+def recorte(df: pd.DataFrame, chapter: str | None = None, senioridade: str | None = None) -> pd.DataFrame:
+    """Filtra por chapter e senioridade; None ou "Todos" não filtra."""
+    if chapter and chapter != TODOS:
+        df = df[df["chapter"] == chapter]
+    if senioridade and senioridade != TODOS:
+        df = df[df["senioridade"] == senioridade]
+    return df
+
+
 # NOTA: as funções abaixo recebem `mes` por compatibilidade com as telas,
 # mas IGNORAM o valor e leem sempre MES_SNAPSHOT. O pipe do Greenhouse não
 # tem data: é foto de hoje. Só a demanda (farol_df) varia por mês.
@@ -921,12 +1100,12 @@ def pipe_qualificado(mes: str, chapter: str | None = None) -> int:
     return int(df["candidatos"].sum())
 
 
-def taxa_aceite_oferta(mes: str, chapter: str | None = None) -> float | None:
+def taxa_aceite_oferta(mes: str, chapter: str | None = None, senioridade: str | None = None) -> float | None:
     """% das ofertas já decididas que viraram contratação:
     contratados / (contratados + reprovados na etapa Oferta). Quem ainda
     está em Oferta fica fora — não decidiu. Premissa: todo contratado
     passou pela Oferta (o Greenhouse não guarda a etapa do contratado)."""
-    df = taxas_df if not chapter else taxas_df[taxas_df["chapter"] == chapter]
+    df = recorte(taxas_df, chapter, senioridade)
     decididas = df["contratados"].sum() + df["recusas_oferta"].sum()
     if not decididas:
         return None
@@ -949,41 +1128,53 @@ def mes_anterior(mes: str) -> str | None:
     return MESES[idx - 1] if idx > 0 else None
 
 
+# Etapa inicial de cada conversão "até a contratação": a coluna de taxas_df
+# que conta quem chegou a ela. O currículo infla o denominador (a maioria
+# é descartada na triagem), por isso a conversão principal parte da Fit.
+INICIO_CONVERSAO = {
+    "Avaliação de currículo": "candidaturas",
+    "Envio do Case Escrito": "chegaram_case",
+    "Entrevista Fit": "chegaram_fit",
+}
+
+
+def conversao_ate_contratacao(inicio: str, chapter: str | None = None, senioridade: str | None = None):
+    """(contratados, quem chegou à etapa `inicio`, %) no histórico inteiro.
+    Numerador e denominador são o mesmo universo, não a foto de hoje."""
+    df = recorte(taxas_df, chapter, senioridade)
+    base_n = int(df[INICIO_CONVERSAO[inicio]].sum())
+    contratados = int(df["contratados"].sum())
+    return contratados, base_n, (contratados / base_n * 100 if base_n else None)
+
+
 def conversao_total_pipe(mes: str) -> float | None:
     """% de todas as candidaturas (de qualquer status) que terminaram em
-    contratação, somando todos os chapters — a eficiência ponta a ponta do
-    funil. Numerador e denominador são o mesmo universo (o histórico
-    inteiro), não a foto de quem está na triagem hoje."""
-    candidaturas = taxas_df["candidaturas"].sum()
-    if not candidaturas:
-        return None
-    return taxas_df["contratados"].sum() / candidaturas * 100
+    contratação, somando todos os chapters."""
+    return conversao_ate_contratacao("Avaliação de currículo")[2]
 
 
-def taxa_aceite_sys(mes: str, chapter: str | None = None) -> float | None:
+def taxa_aceite_sys(mes: str, chapter: str | None = None, senioridade: str | None = None) -> float | None:
     """Conversão do banco See You Soon: % das pessoas que passaram pelo
     banco e aceitaram oferta. Não é taxa de aceite de oferta porque a view
     de SU não registra oferta recusada (só 'Accepted' e 'N/A') — por
     oferta, daria 100% sempre."""
     if su_ofertas_df.empty:
         return None
-    df = su_ofertas_df[su_ofertas_df["mes"] == MES_SNAPSHOT]
-    if chapter:
-        df = df[df["chapter"] == chapter]
+    df = recorte(su_ofertas_df[su_ofertas_df["mes"] == MES_SNAPSHOT], chapter, senioridade)
     candidaturas = df["candidaturas_sys"].sum()
     if not candidaturas:
         return None
     return df["aceites_sys"].sum() / candidaturas * 100
 
 
-def su_tempo_medio_banco() -> float | None:
+def su_tempo_medio_banco(chapter: str | None = None, senioridade: str | None = None) -> float | None:
     """Tempo médio (dias) que os candidatos hoje 'aguardando' no banco See You
-    Soon já estão parados — foto do estoque atual (su_banco_talentos.csv não
-    tem grão mensal, é um snapshot do presente)."""
+    Soon já estão lá — foto do estoque atual. O Greenhouse só dá a média por
+    vaga, então cada pessoa leva o valor da sua vaga."""
     if su_banco_df.empty:
         return None
-    ativos = su_banco_df[su_banco_df["status"] == "aguardando"]
-    if ativos.empty:
+    ativos = recorte(su_banco_df[su_banco_df["status"] == "aguardando"], chapter, senioridade)
+    if ativos.empty or ativos["dias_no_banco"].isna().all():
         return None
     return float(ativos["dias_no_banco"].mean())
 
@@ -1100,11 +1291,25 @@ def _clicked_category(event, axis: str = "y"):
     return points[0].get(axis)
 
 
+def _pipe_por_chapter(etapa: str, senioridade: str | None) -> pd.DataFrame:
+    """Uma etapa, todos os chapters, no recorte de senioridade da página."""
+    df = recorte(pipe_nivel_df[pipe_nivel_df["etapa"] == etapa], None, senioridade)
+    return resumo_pipe(df, ["chapter"]) if not df.empty else df
+
+
+def _sufixo_sen(senioridade: str | None) -> str:
+    return "" if not senioridade or senioridade == TODOS else f" · senioridade {senioridade}"
+
+
 @st.dialog("Detalhamento por carreira")
-def show_conv_drilldown(etapa: str, mes: str) -> None:
+def show_conv_drilldown(etapa: str, mes: str, senioridade: str | None = None) -> None:
     st.markdown(f"#### {etapa}")
-    st.caption(f"% de candidatos que avançam nesta etapa, por chapter — {MES_LABELS[mes]}.")
-    df = pipe_df[(pipe_df["mes"] == MES_SNAPSHOT) & (pipe_df["etapa"] == etapa)].dropna(subset=["conversao_pct"]).copy()
+    st.caption(
+        f"% que chegou a esta etapa vindo da anterior, por chapter{_sufixo_sen(senioridade)}. "
+        "Cada vaga conta no máximo 100%."
+    )
+    df = _pipe_por_chapter(etapa, senioridade)
+    df = df.dropna(subset=["conversao_pct"]).copy() if not df.empty else df
     if df.empty:
         render_note("Sem dado de conversão para esta etapa neste mês.", variant="neutral")
         return
@@ -1121,10 +1326,11 @@ def show_conv_drilldown(etapa: str, mes: str) -> None:
 
 
 @st.dialog("Detalhamento por carreira")
-def show_tempo_drilldown(etapa: str, mes: str) -> None:
+def show_tempo_drilldown(etapa: str, mes: str, senioridade: str | None = None) -> None:
     st.markdown(f"#### {etapa}")
-    st.caption(f"Tempo médio (dias corridos) nesta etapa, por chapter — {MES_LABELS[mes]}.")
-    df = pipe_df[(pipe_df["mes"] == MES_SNAPSHOT) & (pipe_df["etapa"] == etapa)].dropna(subset=["tempo_medio_dias"]).copy()
+    st.caption(f"Tempo médio (dias corridos) nesta etapa, por chapter{_sufixo_sen(senioridade)}.")
+    df = _pipe_por_chapter(etapa, senioridade)
+    df = df.dropna(subset=["tempo_medio_dias"]).copy() if not df.empty else df
     if df.empty:
         render_note("Sem dado de tempo para esta etapa neste mês.", variant="neutral")
         return
@@ -1144,8 +1350,14 @@ def show_tempo_drilldown(etapa: str, mes: str) -> None:
 
 
 def _parados_no_mes(mes: str, etapa: str = None, status_key: str = None, vaga: str = None):
-    """Recorte do candidatos_parados.csv (quem está parado em cada etapa)."""
-    df = parados_df[parados_df["mes"] == MES_SNAPSHOT]
+    """Quem está parado em cada etapa, no recorte de chapter e senioridade
+    escolhido no topo da Visão do Pipe (o modal abre fora da aba, então lê
+    os filtros do session_state)."""
+    df = recorte(
+        parados_df[parados_df["mes"] == MES_SNAPSHOT],
+        st.session_state.get("chapter_pipe"),
+        st.session_state.get("senioridade_pipe"),
+    )
     if etapa is not None:
         df = df[df["etapa"] == etapa]
     if status_key is not None:
@@ -1162,7 +1374,7 @@ def _abrir_parados(etapa: str, status_key: str, vaga=None) -> None:
     st.session_state["_parados_reabrir"] = True
 
 
-@st.dialog("Candidatos parados — por vaga")
+@st.dialog("Candidatos parados por vaga")
 def show_parados_vagas(etapa: str, status_key: str, mes: str) -> None:
     status_label = "Crítico" if status_key == "critico" else "Atenção"
     df = _parados_no_mes(mes, etapa, status_key)
@@ -1180,13 +1392,13 @@ def show_parados_vagas(etapa: str, status_key: str, mes: str) -> None:
         .sort_values("qtd", ascending=False)
     )
     for i, row in enumerate(por_vaga.itertuples(index=False)):
-        rotulo = f"{row.vaga}  —  {row.qtd} candidato(s), até {row.pior:.0f}d no pipe"
+        rotulo = f"{row.vaga} · {row.qtd} candidato(s), até {row.pior:.0f}d no pipe"
         if st.button(rotulo, key=f"parados_vaga_{status_key}_{i}", use_container_width=True):
             _abrir_parados(etapa, status_key, row.vaga)
             st.rerun()
 
 
-@st.dialog("Candidatos parados — quem está parado")
+@st.dialog("Quem está parado")
 def show_parados_candidatos(etapa: str, status_key: str, vaga: str, mes: str) -> None:
     status_label = "Crítico" if status_key == "critico" else "Atenção"
     df = _parados_no_mes(mes, etapa, status_key, vaga).sort_values("dias_na_etapa", ascending=False)
@@ -1195,7 +1407,7 @@ def show_parados_candidatos(etapa: str, status_key: str, vaga: str, mes: str) ->
         render_note("Nenhum candidato parado nesta vaga.", variant="neutral")
         return
     st.caption(
-        f"{len(df)} candidato(s) parado(s) em \"{etapa}\" · {status_label} — {MES_LABELS[mes]}."
+        f"{len(df)} candidato(s) parado(s) em \"{etapa}\" · {status_label} · {MES_LABELS[mes]}."
     )
     cor = RED if status_key == "critico" else AMBER
     itens = []
@@ -1216,6 +1428,57 @@ def show_parados_candidatos(etapa: str, status_key: str, vaga: str, mes: str) ->
         st.rerun()
 
 
+ETAPA_SU = "See You Soon (banco)"
+
+
+@st.dialog("Banco See You Soon")
+def show_su_drilldown(chapter: str | None, senioridade: str | None) -> None:
+    """Quem está aguardando no banco, de quem espera há mais tempo para
+    quem espera há menos. Abre ao clicar na barra rosa do tempo por etapa."""
+    df = recorte(su_banco_df[su_banco_df["status"] == "aguardando"], chapter, senioridade)
+    df = df.sort_values("dias_no_banco", ascending=False, na_position="last")
+    if df.empty:
+        render_note("Ninguém aguardando no banco neste recorte.", variant="neutral")
+        return
+    media = df["dias_no_banco"].mean()
+    por_chapter = (
+        df.assign(chapter=df["chapter"].fillna("Sem chapter"))
+        .groupby("chapter")["dias_no_banco"].agg(["size", "mean"])
+        .sort_values("mean", ascending=False)
+    )
+    st.caption(
+        f"{len(df)} pessoa(s) aguardando"
+        + (f" · média de **{media:.0f} dias** no banco. " if pd.notna(media) else ". ")
+        + " · ".join(
+            f"{ch}: {int(r['size'])} ({r['mean']:.0f}d)" if pd.notna(r["mean"]) else f"{ch}: {int(r['size'])} (sem dias)"
+            for ch, r in por_chapter.iterrows()
+        )
+    )
+    render_note(
+        "O Greenhouse só informa a média de dias por <b>vaga</b>: pessoas da mesma vaga aparecem com o "
+        "mesmo número. Use para achar as vagas com banco parado há mais tempo.",
+        variant="neutral",
+    )
+    itens = []
+    for row in df.itertuples(index=False):
+        iniciais = "".join(parte[0] for parte in str(row.candidato).split()[:2]).upper()
+        dias = f"{row.dias_no_banco:.0f}d" if pd.notna(row.dias_no_banco) else "—"
+        cor = RED if pd.notna(row.dias_no_banco) and row.dias_no_banco > 90 else (
+            AMBER if pd.notna(row.dias_no_banco) and row.dias_no_banco > 45 else PAL["muted"]
+        )
+        chapter_txt = row.chapter if isinstance(row.chapter, str) else "Sem chapter"
+        itens.append(
+            f'<div class="cand-item">'
+            f'<div class="cand-left"><div class="cand-avatar">{iniciais}</div>'
+            f'<div><div class="cand-name">{row.candidato}</div>'
+            f'<div class="cand-role">{chapter_txt} · {row.senioridade}</div></div></div>'
+            f'<div class="cand-right"><div class="cand-days" style="color:{cor}">{dias}</div>'
+            f'<div class="cand-meta">no banco (média da vaga)</div></div>'
+            f"</div>"
+        )
+    st.markdown("".join(itens), unsafe_allow_html=True)
+
+
 CHART_LAYOUT = dict(
     margin=dict(l=10, r=10, t=10, b=10),
     plot_bgcolor=PAL["surface"],
@@ -1226,7 +1489,9 @@ CHART_LAYOUT = dict(
     yaxis=dict(gridcolor=PAL["line"], zerolinecolor=PAL["line"]),
 )
 
-tab_exec, tab_farol, tab_pipe = st.tabs(["Visão Gerencial", "Farol Executivo", "Visão do Pipe"])
+tab_exec, tab_farol, tab_pipe, tab_ajuda = st.tabs(
+    ["Visão Gerencial", "Farol Executivo", "Visão do Pipe", "Como ler"]
+)
 
 # ---------------------------------------------------------------------------
 # TAB 0 — VISÃO GERENCIAL
@@ -1235,19 +1500,21 @@ with tab_exec:
     st.markdown("## 🧭 Visão Gerencial")
     st.caption(
         "Resumo executivo do mês: quanto falta contratar, quanto pipe qualificado já existe para "
-        "cobrir essa necessidade, e quão rápido e eficiente está o funil — antes de entrar no "
-        "detalhe por chapter (aba Farol Executivo) ou por etapa (aba Visão do Pipe)."
+        "cobrir essa necessidade, e quão rápido e eficiente está o funil. O detalhe por chapter fica "
+        "na aba Farol Executivo, e o detalhe por etapa, na Visão do Pipe."
     )
 
     mes_sel0 = st.selectbox(
         "Mês da demanda", MESES, index=IDX_MES_PADRAO, format_func=lambda m: MES_LABELS[m], key="mes_exec"
     )
-    st.caption(f"📷 Pipe: foto de **{DATA_SNAPSHOT}** — não muda com o mês; só a demanda muda.")
+    st.caption(f"📷 Pipe: foto de **{DATA_SNAPSHOT}**. Ele não muda com o mês, só a demanda muda.")
     mes_ant0 = mes_anterior(mes_sel0)
 
     df_mes0 = farol_df[farol_df["mes"] == mes_sel0]
     farol_chapters = sorted(farol_df["chapter"].unique())
     demanda_total = float(df_mes0["demanda_liquida"].sum())
+    pedido_total = float(df_mes0["demanda_bruta_fte"].sum())
+    desalocado_total = float(df_mes0["desalocado_fte"].sum())
     pipe_qual_total = sum(pipe_qualificado(mes_sel0, ch) for ch in farol_chapters)
     tempo_total = tempo_medio_contratacao(mes_sel0)
     aceite_total = taxa_aceite_oferta(mes_sel0)
@@ -1276,13 +1543,14 @@ with tab_exec:
             "Necessidade de contratação líquida",
             f"{demanda_total:.0f}",
             _delta_html(demanda_total, demanda_ant, None, "{:.0f}", " pessoas"),
-            "Soma da demanda líquida (Artefactory) de todos os chapters neste mês.",
+            f"{pedido_total:.0f} pedidos pelos projetos menos {desalocado_total:.0f} pessoas que saem de "
+            "projeto e podem ser realocadas (Artefactory), somando todos os chapters.",
         ),
         (
             "Pipe qualificado atual",
             f"{pipe_qual_total:.0f}",
             _delta_html(pipe_qual_total, pipe_qual_ant, True, "{:.0f}", " candidatos"),
-            "Candidatos da Entrevista Fit até a Oferta, somando os chapters com demanda cadastrada — quem já passou da triagem inicial.",
+            "Candidatos da Entrevista Fit até a Oferta, somando os chapters com demanda cadastrada: quem já passou da triagem inicial.",
         ),
         (
             "Tempo médio de contratação",
@@ -1309,18 +1577,21 @@ with tab_exec:
         unsafe_allow_html=True,
     )
 
-    agg0 = (
-        df_mes0.groupby("chapter", as_index=False)
-        .agg(demanda=("demanda_liquida", "sum"), oferta=("oferta_ajustada", "sum"))
-    )
-    stat0 = agg0.apply(lambda r: farol_status(r["demanda"], r["oferta"]), axis=1, result_type="expand")
-    agg0["status"] = stat0[0]
-    n_acel0, n_pausa0 = int((agg0["status"] == "acelerar").sum()), int((agg0["status"] == "pausar").sum())
+    # mesma leitura do Farol Executivo: decisão por chapter × senioridade
+    # (Entry e Senior), não pela soma do chapter, que esconde senioridades
+    dec0 = df_mes0[df_mes0["senioridade"].isin(SENIORIDADES_FAROL)]
+    acel0 = dec0[dec0["farol_status"] == "acelerar"]
+    n_pausa0 = int((dec0["farol_status"] == "pausar").sum())
+    lista_acel0 = ", ".join(f"{r['chapter']} {r['senioridade']}" for _, r in acel0.iterrows())
     render_finding(
-        f"Em <b>{MES_LABELS[mes_sel0]}</b>: necessidade líquida de <b>{demanda_total:.0f} pessoas</b>, "
-        f"com <b>{pipe_qual_total:.0f} candidatos</b> já qualificados no pipe (a partir da Fit) — "
-        f"<b>{n_acel0} chapter(s)</b> pedindo para acelerar e <b>{n_pausa0}</b> para pausar. "
-        "Veja o detalhe por chapter na aba <b>Farol Executivo</b>."
+        f"Em <b>{MES_LABELS[mes_sel0]}</b>: os projetos pedem <b>{pedido_total:.0f} pessoas</b>, "
+        f"<b>{desalocado_total:.0f}</b> saem de projeto e podem ser realocadas, e a necessidade líquida "
+        f"de contratação fica em <b>{demanda_total:.0f} pessoas</b>, "
+        f"com <b>{pipe_qual_total:.0f} candidatos</b> já qualificados no pipe (a partir da Fit). "
+        f"Entre {' e '.join(SENIORIDADES_FAROL)}: <b>{len(acel0)} combinação(ões)</b> pedindo para acelerar"
+        + (f" ({lista_acel0})" if lista_acel0 else "")
+        + f" e <b>{n_pausa0}</b> para pausar. "
+        "Veja a matriz carreira × senioridade na aba <b>Farol Executivo</b>."
     )
 
 # ---------------------------------------------------------------------------
@@ -1337,218 +1608,244 @@ with tab_farol:
     mes_sel = st.selectbox(
         "Mês da demanda", MESES, index=IDX_MES_PADRAO, format_func=lambda m: MES_LABELS[m], key="mes_farol"
     )
-    st.caption(f"📷 Pipe: foto de **{DATA_SNAPSHOT}** — não muda com o mês; só a demanda muda.")
+    st.caption(f"📷 Pipe: foto de **{DATA_SNAPSHOT}**. Ele não muda com o mês, só a demanda muda.")
 
     df_mes = farol_df[farol_df["mes"] == mes_sel]
-
-    agg = (
-        df_mes.groupby("chapter", as_index=False)
-        .agg(demanda=("demanda_liquida", "sum"), oferta=("oferta_ajustada", "sum"))
-        .sort_values("chapter")
-    )
-    stat = agg.apply(lambda r: farol_status(r["demanda"], r["oferta"]), axis=1, result_type="expand")
-    agg["status"], agg["gap_pct"] = stat[0], stat[1]
-
-    # Senioridade que pede acelerar ou pausar ao contrário do card do
-    # chapter. A soma por chapter esconde isso: Data Engineering pode estar
-    # em "pausar" no total e ainda precisar contratar Seniors.
-    _status_ch = agg.set_index("chapter")["status"]
-    divergentes = [
-        (r["chapter"], r["senioridade"], r["farol_status"])
-        for _, r in df_mes.sort_values(["chapter", "senioridade"]).iterrows()
-        if r["farol_status"] in ("acelerar", "pausar") and r["farol_status"] != _status_ch.get(r["chapter"])
-    ]
-
-    n_acelerar = int((agg["status"] == "acelerar").sum())
-    n_pausar = int((agg["status"] == "pausar").sum())
     mes_label_sel = MES_LABELS[mes_sel]
-    if n_acelerar == 0 and n_pausar == 0:
-        finding_txt = f"Em <b>{mes_label_sel}</b>, todos os {len(agg)} chapters estão em 🟡 manter — ritmo de contratação equilibrado com a demanda."
+    chapters_farol = sorted(df_mes["chapter"].unique())
+    # Entry e Senior primeiro (decisão de contratação); Estagiário por
+    # último e apagado (acompanhamento); qualquer outro nível no fim.
+    sens_extra = sorted(set(df_mes["senioridade"]) - set(SENIORIDADES_FAROL) - {"Estagiário"})
+    sens_matriz = SENIORIDADES_FAROL + sens_extra + (["Estagiário"] if "Estagiário" in set(df_mes["senioridade"]) else [])
+
+    # O status agora é por chapter × senioridade. O status do chapter
+    # inteiro foi removido de propósito: somar as senioridades escondia, por
+    # exemplo, Data Engineering em "pausar" precisando contratar Senior.
+    decisao = df_mes[df_mes["senioridade"].isin(SENIORIDADES_FAROL)].copy()
+    decisao["falta"] = decisao["demanda_liquida"] - decisao["oferta_ajustada"]
+    acel = decisao[decisao["farol_status"] == "acelerar"].sort_values("falta", ascending=False)
+    paus = decisao[decisao["farol_status"] == "pausar"].sort_values("falta")
+
+    def _lista(df):
+        return ", ".join(
+            f"<b>{r['chapter']} {r['senioridade']}</b> ({gap_texto(r['gap_pct'], r['demanda_liquida'], r['oferta_ajustada'], curto=True)})"
+            for _, r in df.iterrows()
+        )
+
+    if acel.empty and paus.empty:
+        finding_txt = (
+            f"Em <b>{mes_label_sel}</b>, todas as combinações de {' e '.join(SENIORIDADES_FAROL)} "
+            "estão em 🟡 manter."
+        )
     else:
         partes = []
-        if n_acelerar:
-            # destaque e "mais crítico" pelo gap em PESSOAS, não pelo %: o %
-            # explode em demanda pequena e não existe com demanda <= 0
-            acelerados = agg[agg["status"] == "acelerar"]
-            top_acel = acelerados.loc[(acelerados["demanda"] - acelerados["oferta"]).idxmax()]
-            partes.append(
-                f"<b>{n_acelerar} chapter(s) em 🟢 acelerar</b> — destaque para <b>{top_acel['chapter']}</b> ({gap_texto(top_acel['gap_pct'], top_acel['demanda'], top_acel['oferta'])})"
-            )
-        if n_pausar:
-            pausados = agg[agg["status"] == "pausar"]
-            top_pausa = pausados.loc[(pausados["demanda"] - pausados["oferta"]).idxmin()]
-            partes.append(
-                f"<b>{n_pausar} chapter(s) em 🔴 pausar</b> — o mais crítico é <b>{top_pausa['chapter']}</b> ({gap_texto(top_pausa['gap_pct'], top_pausa['demanda'], top_pausa['oferta'])})"
-            )
+        if not acel.empty:
+            partes.append(f"🟢 <b>acelerar</b>: {_lista(acel)}")
+        if not paus.empty:
+            partes.append(f"🔴 <b>pausar</b>: {_lista(paus)}")
         finding_txt = f"Em <b>{mes_label_sel}</b>: " + " · ".join(partes) + "."
-    if divergentes:
-        finding_txt += (
-            " <b>Atenção:</b> dentro de chapters com outro status, "
-            + ", ".join(f"<b>{ch} {sen}</b> pede {STATUS_LABEL[st_].lower()}" for ch, sen, st_ in divergentes)
-            + " — veja o detalhe por senioridade antes de decidir."
-        )
     render_finding(finding_txt)
 
-    st.markdown("### Farol por chapter")
+    st.markdown("### Farol por carreira × senioridade")
     st.caption(
-        "🟢 Acelerar = abrir vagas · 🟡 Manter = ritmo saudável · 🔴 Pausar = oferta acima da demanda. "
-        "Passe o mouse sobre um card para o motivo do status, ou clique em **Ver detalhe** para a quebra por senioridade. "
-        "\"Pipe qualificado\" soma os candidatos deste chapter da Entrevista Fit até a Oferta, na foto do pipe."
+        "Cada célula é uma decisão: 🟢 acelerar = abrir vagas · 🟡 manter · 🔴 pausar = oferta acima da demanda. "
+        f"A decisão de contratação olha {' e '.join(SENIORIDADES_FAROL)}; Estagiário aparece apagado, só para "
+        "acompanhamento, porque segue o ritmo das turmas de estágio. Passe o mouse numa célula para o motivo."
     )
-    cols = st.columns(len(agg))
-    if "chapter_sel" not in st.session_state:
-        st.session_state["chapter_sel"] = agg.iloc[0]["chapter"]
 
-    for col, (_, row) in zip(cols, agg.iterrows()):
-        with col:
-            color = STATUS_COLOR[row["status"]]
-            bg = STATUS_BG[row["status"]]
-            gap_txt = gap_texto(row["gap_pct"], row["demanda"], row["oferta"])
-            tip = _html_attr(farol_insight(row["status"], row["gap_pct"], row["demanda"], row["oferta"]))
-            # sempre renderiza o bloco (vazio quando não há aviso) para os
-            # cards ficarem com a mesma altura
-            aviso = "<br>".join(
-                f'<span style="color:{STATUS_COLOR[st_]}">⚠ {sen}: {STATUS_LABEL[st_].lower()}</span>'
-                for ch, sen, st_ in divergentes
-                if ch == row["chapter"]
+    # Grid de divs, não <table>: o Streamlit aplica o estilo dele em
+    # tabelas de markdown (bordas retas, fundo) e a matriz ficava "planilha".
+    def _celula(r, apagada: bool) -> str:
+        if r is None:
+            return '<div class="fm-card fm-vazia"><div class="fm-vazia-txt">sem demanda nem pipe</div></div>'
+        s = r["farol_status"]
+        cor = STATUS_COLOR[s]
+        tip = _html_attr(farol_insight(s, r["gap_pct"], r["demanda_liquida"], r["oferta_ajustada"]))
+        gap = gap_texto(r["gap_pct"], r["demanda_liquida"], r["oferta_ajustada"], curto=True)
+        gap = gap[:1].upper() + gap[1:]
+        nums = (
+            f'<span>Demanda <b>{r["demanda_liquida"]:.1f}</b></span>'
+            f'<span>Oferta <b>{r["oferta_ajustada"]:.1f}</b></span>'
+        )
+        # de onde vem a demanda: pedido dos projetos menos quem sai de projeto
+        origem = (
+            f'<div class="fm-orig">Pedido {r["demanda_bruta_fte"]:.1f} − desalocados {r["desalocado_fte"]:.1f}</div>'
+            if r["desalocado_fte"] > 0 else ""
+        )
+        if apagada:
+            return (
+                f'<div class="fm-card fm-apagada" title="{tip}">'
+                f'<div class="fm-mini"><span class="fm-dot" style="background:{cor}"></span>'
+                f'{STATUS_LABEL[s].capitalize()} · {gap}</div>'
+                f'<div class="fm-num">{nums}</div>{origem}</div>'
             )
-            st.markdown(
-                f"""
-                <div class="farol-card" data-tip="{tip}">
-                    <div class="chapter">{row['chapter']}</div>
-                    <div class="light">{STATUS_ICON[row['status']]}</div>
-                    <div class="badge" style="color:{color}; background:{bg}">{STATUS_LABEL[row['status']]}</div>
-                    <div class="kpis">
-                        Gap: <b>{gap_txt}</b><br>
-                        Demanda: <b>{row['demanda']:.1f}</b> · Oferta: <b>{row['oferta']:.1f}</b><br>
-                        Pipe qualificado: <b>{pipe_qualificado(mes_sel, row['chapter'])}</b>
-                    </div>
-                    <div class="aviso">{aviso}</div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-            st.write("")
-            if st.button("Ver detalhe →", key=f"btn_{row['chapter']}", use_container_width=True):
-                st.session_state["chapter_sel"] = row["chapter"]
+        return (
+            f'<div class="fm-card" style="--fm-cor:{cor}; --fm-bg:{STATUS_BG[s]}" title="{tip}">'
+            f'<span class="fm-pill"><span class="fm-dot" style="background:{cor}"></span>{STATUS_LABEL[s]}</span>'
+            f'<div class="fm-gap">{gap}</div>'
+            f'<div class="fm-num">{nums}</div>{origem}</div>'
+        )
+
+    n_cols = len(sens_matriz)
+    cab = '<div class="fm-th"></div>' + "".join(
+        f'<div class="fm-th{" fm-th-apagada" if s == "Estagiário" else ""}">{s}'
+        f'{"<span>acompanhamento</span>" if s == "Estagiário" else ""}</div>'
+        for s in sens_matriz
+    ) + '<div class="fm-th">Total do chapter<span>sem status</span></div>'
+    linhas = []
+    for ch in chapters_farol:
+        do_ch = df_mes[df_mes["chapter"] == ch].set_index("senioridade")
+        celulas = "".join(
+            _celula(do_ch.loc[s] if s in do_ch.index else None, apagada=(s == "Estagiário"))
+            for s in sens_matriz
+        )
+        total = (
+            f'<div class="fm-total">'
+            f'<div><span>Pedido dos projetos</span><b>{do_ch["demanda_bruta_fte"].sum():.1f}</b></div>'
+            f'<div><span>− Desalocados</span><b>{do_ch["desalocado_fte"].sum():.1f}</b></div>'
+            f'<div class="fm-total-liq"><span>Demanda líquida</span><b>{do_ch["demanda_liquida"].sum():.1f}</b></div>'
+            f'<div><span>Oferta</span><b>{do_ch["oferta_ajustada"].sum():.1f}</b></div>'
+            f'<div><span>Pipe qualificado</span><b>{pipe_qualificado(mes_sel, ch)}</b></div></div>'
+        )
+        linhas.append(f'<div class="fm-chapter">{ch}</div>{celulas}{total}')
+    st.markdown(
+        f'<div class="fm-wrap"><div class="fm-grid" style="--fm-n:{n_cols}">'
+        + cab
+        + "".join(linhas)
+        + "</div></div>",
+        unsafe_allow_html=True,
+    )
+    st.caption(
+        "A demanda de cada célula já é líquida: o que os projetos pedem menos as pessoas que saem de projeto "
+        "no mês e podem ser realocadas (as duas do Artefactory). Só o que sobra precisa de contratação. "
+        "\"Total do chapter\" não tem status de propósito: a soma das senioridades pode dizer pausar "
+        "enquanto uma delas precisa de contratação. \"Pipe qualificado\" = candidatos do chapter da "
+        "Entrevista Fit até a Oferta, na foto do pipe."
+    )
 
     st.divider()
 
-    chapter_sel = st.session_state["chapter_sel"]
-    st.markdown(f"### Demanda vs. oferta por senioridade — {chapter_sel}")
+    chapter_sel = st.selectbox("Chapter para ver o detalhe por senioridade", chapters_farol, key="chapter_sel")
+    st.markdown(f"### Demanda × oferta por senioridade em {chapter_sel}")
     st.caption(
-        "Cada linha liga a oferta ajustada (círculo) à demanda líquida de referência (losango rosa) — "
-        "a distância entre os dois é o gap. A cor da linha segue o farol daquela senioridade."
+        f"{mes_label_sel}. Para cada senioridade, a barra rosa é a demanda líquida (o pedido dos projetos menos "
+        "quem sai de projeto e pode ser realocado) e a azul é a oferta ajustada do pipe. À direita, quanto falta "
+        "ou sobra e o farol. Passe o mouse na barra rosa para ver o pedido e os desalocados."
     )
 
     detail = df_mes[df_mes["chapter"] == chapter_sel].copy()
-    detail_ok = detail[detail["farol_status"] != "sem_dado"]
-    detail_semdado = detail[detail["farol_status"] == "sem_dado"]
+    ordem_sen = {s: i for i, s in enumerate(sens_matriz)}
+    detail["_ordem"] = detail["senioridade"].map(ordem_sen).fillna(len(ordem_sen))
+    detail = detail.sort_values("_ordem")
 
-    if detail_ok.empty:
-        render_note("Sem dado suficiente para nenhuma senioridade deste chapter neste mês.", variant="warn")
+    if detail.empty:
+        render_note("Sem dado para este chapter neste mês.", variant="warn")
     else:
-        status_labels = detail_ok["farol_status"].map(STATUS_LABEL)
-        gaps_txt = [
-            gap_texto(g, d, o)
-            for g, d, o in zip(detail_ok["gap_pct"], detail_ok["demanda_liquida"], detail_ok["oferta_ajustada"])
+        # Barras agrupadas em vez do gráfico de halteres: demanda e oferta
+        # lado a lado se leem sem legenda de símbolo, e o veredito fica
+        # escrito ao lado, na cor do farol.
+        rotulos_y = [
+            f"{s} (acompanhamento)" if s == "Estagiário" else s for s in detail["senioridade"]
         ]
-        max_val = float(max(detail_ok["oferta_ajustada"].max(), detail_ok["demanda_liquida"].max()))
+        gaps_txt = [
+            gap_texto(g, d, o, curto=True)
+            for g, d, o in zip(detail["gap_pct"], detail["demanda_liquida"], detail["oferta_ajustada"])
+        ]
+        max_val = float(max(detail["oferta_ajustada"].max(), detail["demanda_liquida"].max(), 0.5))
 
         fig = go.Figure()
-        for _, r in detail_ok.iterrows():
-            fig.add_trace(
-                go.Scatter(
-                    x=[r["oferta_ajustada"], r["demanda_liquida"]],
-                    y=[r["senioridade"], r["senioridade"]],
-                    mode="lines",
-                    line=dict(color=STATUS_COLOR[r["farol_status"]], width=3),
-                    hoverinfo="skip",
-                    showlegend=False,
-                )
-            )
         fig.add_trace(
-            go.Scatter(
-                y=detail_ok["senioridade"],
-                x=detail_ok["oferta_ajustada"],
-                mode="markers",
-                marker=dict(
-                    size=15,
-                    color=[STATUS_COLOR[s] for s in detail_ok["farol_status"]],
-                    line=dict(width=2, color=PAL["surface"]),
-                ),
-                name="Oferta ajustada",
-                customdata=list(zip(detail_ok["demanda_liquida"], gaps_txt, status_labels)),
+            go.Bar(
+                y=rotulos_y,
+                x=detail["demanda_liquida"].clip(lower=0),
+                name="Demanda líquida",
+                orientation="h",
+                marker=dict(color=PINK, cornerradius=4),
+                text=[f"{v:.1f}" for v in detail["demanda_liquida"]],
+                textposition="outside",
+                cliponaxis=False,
+                customdata=list(zip(detail["demanda_bruta_fte"], detail["desalocado_fte"])),
                 hovertemplate=(
-                    "<b>%{y}</b><br>"
-                    "Oferta ajustada: <b>%{x:.1f}</b> pessoas<br>"
-                    "Demanda líquida: <b>%{customdata[0]:.1f}</b> pessoas<br>"
-                    "Gap: <b>%{customdata[1]}</b><br>"
-                    "Status: <b>%{customdata[2]}</b>"
-                    "<extra></extra>"
+                    "<b>%{y}</b><br>Pedido dos projetos: <b>%{customdata[0]:.1f}</b><br>"
+                    "− Desalocados (realocáveis): <b>%{customdata[1]:.1f}</b><br>"
+                    "= Demanda líquida: <b>%{text}</b> pessoas<extra></extra>"
                 ),
             )
         )
         fig.add_trace(
-            go.Scatter(
-                y=detail_ok["senioridade"],
-                x=detail_ok["demanda_liquida"],
-                mode="markers",
-                marker=dict(size=13, symbol="diamond", color=PINK, line=dict(width=2, color=PAL["surface"])),
-                name="Demanda líquida (referência)",
-                hovertemplate="<b>%{y}</b><br>Demanda líquida de referência: <b>%{x:.0f}</b> pessoas<extra></extra>",
+            go.Bar(
+                y=rotulos_y,
+                x=detail["oferta_ajustada"],
+                name="Oferta ajustada",
+                orientation="h",
+                marker=dict(color=ARTEFACT_BLUE if THEME == "light" else "#6F86FF", cornerradius=4),
+                text=[f"{v:.1f}" for v in detail["oferta_ajustada"]],
+                textposition="outside",
+                cliponaxis=False,
+                hovertemplate="<b>%{y}</b><br>Oferta ajustada: <b>%{text}</b> pessoas<extra></extra>",
             )
         )
-        for _, r in detail_ok.iterrows():
+        for y, s, gap in zip(rotulos_y, detail["farol_status"], gaps_txt):
             fig.add_annotation(
-                x=max(r["oferta_ajustada"], r["demanda_liquida"]),
-                y=r["senioridade"],
-                text=gap_texto(r["gap_pct"], r["demanda_liquida"], r["oferta_ajustada"], curto=True),
+                x=1.0, xref="paper", xanchor="left", xshift=12,
+                y=y, yref="y",
+                text=f"<b>{STATUS_LABEL[s].capitalize()}</b> · {gap}",
                 showarrow=False,
-                xanchor="left",
-                xshift=12,
-                font=dict(size=11.5, color=STATUS_COLOR[r["farol_status"]], family="Roboto Mono, monospace"),
+                font=dict(size=12.5, color=STATUS_COLOR[s]),
             )
-        fig.update_xaxes(range=[0, max_val * 1.32 if max_val > 0 else 1])
+        layout = {k: v for k, v in CHART_LAYOUT.items() if k not in ("margin", "yaxis")}
         fig.update_layout(
-            height=max(220, 70 * len(detail_ok)),
+            barmode="group",
+            bargap=0.35,
+            bargroupgap=0.08,
+            height=max(240, 95 * len(detail)),
+            margin=dict(l=10, r=170, t=40, b=10),
             xaxis_title="Pessoas",
-            legend=dict(orientation="h", yanchor="bottom", y=1.02),
-            **CHART_LAYOUT,
+            xaxis_range=[0, max_val * 1.18],
+            yaxis=dict(autorange="reversed", gridcolor=PAL["line"], tickfont=dict(size=13, color=PAL["ink"])),
+            legend=dict(
+                orientation="h", yanchor="bottom", y=1.02, x=0,
+                font=dict(color=PAL["ink"], size=12.5), traceorder="normal",
+            ),
+            uniformtext=dict(minsize=10, mode="show"),
+            **layout,
         )
         st.plotly_chart(fig, use_container_width=True)
 
-    if not detail_semdado.empty:
-        st.caption(
-            "⚪ Sem dado suficiente para calcular farol: "
-            + ", ".join(detail_semdado["senioridade"].tolist())
-        )
-
-    with st.expander("Ver tabela detalhada por senioridade"):
+        st.markdown("##### Tabela por senioridade")
         tbl = detail[
-            ["senioridade", "demanda_liquida", "oferta_ajustada", "gap", "gap_pct", "farol_status"]
+            ["senioridade", "demanda_bruta_fte", "desalocado_fte", "demanda_liquida", "oferta_ajustada", "gap_pct", "farol_status"]
         ].copy()
-        tendencias = [
-            sparkline_svg(gap_trend(chapter_sel, s), STATUS_COLOR[st_])
-            for s, st_ in zip(detail["senioridade"], detail["farol_status"])
+        tbl["falta_sobra"] = gaps_txt
+        # Gap % só com demanda de pelo menos 1 pessoa: com demanda 0,1 o %
+        # explode (-2.536%) e não ajuda a decidir nada
+        tbl["gap_pct"] = [
+            f"{g:+.0f}%" if pd.notna(g) and d >= 1 else "—"
+            for g, d in zip(tbl["gap_pct"], tbl["demanda_liquida"])
         ]
-        tbl["demanda_liquida"] = tbl["demanda_liquida"].map(lambda v: f"{v:.0f}")
+        tbl["demanda_bruta_fte"] = tbl["demanda_bruta_fte"].map(lambda v: f"{v:.1f}")
+        tbl["desalocado_fte"] = tbl["desalocado_fte"].map(lambda v: f"−{v:.1f}" if v else "0.0")
+        tbl["demanda_liquida"] = tbl["demanda_liquida"].map(lambda v: f"{v:.1f}")
         tbl["oferta_ajustada"] = tbl["oferta_ajustada"].map(lambda v: f"{v:.1f}")
-        tbl["gap"] = tbl["gap"].map(lambda v: f"{v:+.1f}")
-        tbl["gap_pct"] = tbl["gap_pct"].map(lambda v: f"{v:+.1f}%" if pd.notna(v) else "—")
         tbl["farol_status"] = tbl["farol_status"].map(lambda s: f"{STATUS_ICON[s]} {STATUS_LABEL[s]}")
-        tbl["tendencia"] = tendencias
-        tbl.columns = ["Senioridade", "Demanda líquida", "Oferta ajustada", "Gap", "Gap %", "Status", "Tendência (gap)"]
+        tbl = tbl[
+            ["senioridade", "demanda_bruta_fte", "desalocado_fte", "demanda_liquida", "oferta_ajustada",
+             "falta_sobra", "gap_pct", "farol_status"]
+        ]
+        tbl.columns = [
+            "Senioridade", "Pedido dos projetos", "Desalocados", "Demanda líquida", "Oferta ajustada",
+            "Falta / sobra", "Gap %", "Status",
+        ]
         render_table(
             tbl,
-            numeric_cols={"Demanda líquida", "Oferta ajustada", "Gap", "Gap %"},
-            center_cols={"Tendência (gap)"},
+            numeric_cols={"Pedido dos projetos", "Desalocados", "Demanda líquida", "Oferta ajustada", "Gap %"},
             help_map={
-                "Demanda líquida": "Pessoas necessárias no período (Artefactory): ongoing + forecast ponderado − alocações previstas.",
-                "Oferta ajustada": "Candidatos do pipe (ponderados pela conversão esperada) + SU ponderado pela taxa de reativação.",
-                "Gap %": "(Demanda − Oferta) / Demanda. Acima de 20% = acelerar; entre -10% e 20% = manter; abaixo de -10% = pausar.",
-                "Status": "Farol calculado a partir do Gap %.",
-                "Tendência (gap)": "Evolução do Gap % ao longo dos meses disponíveis, para esta senioridade.",
+                "Pedido dos projetos": "Quanto os projetos pedem de gente no mês (Artefactory, em FTE).",
+                "Desalocados": "Pessoas que saem de projeto no mês e podem ser realocadas, em vez de contratar (Artefactory).",
+                "Demanda líquida": "Pedido dos projetos menos desalocados: o que sobra para contratar.",
+                "Oferta ajustada": "Candidatos vivos do Envio do Case em diante, cada um pesado pela chance de virar contratação em até 45 dias.",
+                "Gap %": "(Demanda − Oferta) / Demanda. Só aparece com demanda de 1 pessoa ou mais.",
+                "Status": "Diferença menor que 1 pessoa = manter. Demanda zero ou negativa = pausar. Senão: acima de +20% acelerar, abaixo de −10% pausar.",
             },
         )
 
@@ -1558,8 +1855,8 @@ with tab_farol:
 with tab_pipe:
     st.markdown("## 📈 Visão Completa do Pipe")
     st.caption(
-        "KPIs de conversão, tempo por etapa, distribuição de candidatos e alertas de gargalo — "
-        "dados do funil de contratação no Greenhouse."
+        "Conversão, tempo por etapa, distribuição de candidatos e alertas de gargalo do funil de "
+        "contratação no Greenhouse."
     )
 
     # Sem seletor de mês aqui de propósito: nenhuma view do Greenhouse tem
@@ -1567,84 +1864,95 @@ with tab_pipe:
     # só nas abas que leem a demanda (Visão Gerencial e Farol Executivo).
     mes_sel2 = MES_SNAPSHOT
     chapters_pipe = sorted(pipe_df["chapter"].unique())
-    chapter_sel2 = st.selectbox("Chapter (funil e conversão)", chapters_pipe, key="chapter_pipe")
-    st.caption(f"📷 Pipe: foto de **{DATA_SNAPSHOT}** — o Greenhouse não guarda histórico por etapa.")
+    sens_presentes = set(pipe_nivel_df["senioridade"])
+    sens_pipe = [s for s in SENIORIDADE_ORDER if s in sens_presentes] + sorted(
+        sens_presentes - set(SENIORIDADE_ORDER)
+    )
+    col_fc, col_fs = st.columns(2)
+    with col_fc:
+        chapter_sel2 = st.selectbox("Chapter", [TODOS] + chapters_pipe, key="chapter_pipe")
+    with col_fs:
+        sen_sel2 = st.selectbox("Senioridade", [TODOS] + sens_pipe, key="senioridade_pipe")
+    rotulo_recorte = (
+        ("todos os chapters" if chapter_sel2 == TODOS else chapter_sel2)
+        + " · "
+        + ("todas as senioridades" if sen_sel2 == TODOS else sen_sel2)
+    )
+    st.caption(
+        f"📷 Pipe: foto de **{DATA_SNAPSHOT}**. O Greenhouse não guarda histórico por etapa. "
+        f"**Os dois filtros valem para a aba inteira** (recorte atual: {rotulo_recorte}). A exceção são "
+        "os dois gráficos \"por carreira\", que comparam chapters: eles seguem só a senioridade."
+    )
 
-    dfp_mes = pipe_df[pipe_df["mes"] == mes_sel2]
-    dfp_chapter = dfp_mes[dfp_mes["chapter"] == chapter_sel2].sort_values("ordem_etapa")
+    # o azul da marca some no fundo escuro: no tema escuro, um azul mais claro
+    azul_barra = ARTEFACT_BLUE if THEME == "light" else "#6F86FF"
 
-    mes_ant2 = None  # foto de hoje: não há mês anterior de pipe para comparar
-    conversao_total = conversao_total_pipe(mes_sel2)
-    aceite_geral_mes = taxa_aceite_oferta(mes_sel2)
-    aceite_sys_mes = taxa_aceite_sys(mes_sel2)
-    su_tempo_banco = su_tempo_medio_banco()
-    conversao_ant = conversao_total_pipe(mes_ant2) if mes_ant2 else None
-    aceite_geral_ant = taxa_aceite_oferta(mes_ant2) if mes_ant2 else None
-    aceite_sys_ant = taxa_aceite_sys(mes_ant2) if mes_ant2 else None
-
-    def _delta_pipe(atual, anterior, mes_ref):
-        if atual is None or anterior is None or mes_ref is None:
-            return ""
-        diff = atual - anterior
-        arrow = "↑" if diff >= 0 else "↓"
-        color = GREEN if diff >= 0 else RED
-        return f'<div class="exec-kpi-delta" style="color:{color}">{arrow} {abs(diff):.0f}pp vs. {MES_LABELS[mes_ref]}</div>'
+    # pipe no recorte escolhido: por etapa, e por chapter × etapa
+    nivel_rec = recorte(pipe_nivel_df[pipe_nivel_df["mes"] == mes_sel2], chapter_sel2, sen_sel2)
+    if nivel_rec.empty:
+        render_note(f"Sem candidaturas no recorte {rotulo_recorte}.", variant="neutral")
+        st.stop()
+    dfp_rec = resumo_pipe(nivel_rec, ["etapa", "ordem_etapa"]).sort_values("ordem_etapa")
+    dfp_mes = resumo_pipe(nivel_rec, ["chapter", "etapa", "ordem_etapa"])
 
     def _n(valor) -> str:
         """Inteiro no formato brasileiro: 57312 -> 57.312."""
         return f"{int(round(valor)):,}".replace(",", ".")
 
-    n_candidaturas = taxas_df["candidaturas"].sum()
-    n_contratados = taxas_df["contratados"].sum()
-    n_decididas = n_contratados + taxas_df["recusas_oferta"].sum()
-    su_mes = su_ofertas_df[su_ofertas_df["mes"] == MES_SNAPSHOT] if not su_ofertas_df.empty else su_ofertas_df
-    n_su = su_mes["candidaturas_sys"].sum() if not su_mes.empty else 0
-    n_su_aceites = su_mes["aceites_sys"].sum() if not su_mes.empty else 0
+    # ---- KPIs: cada título diz a etapa onde a conta começa ---------------
+    contr_fit, base_fit, conv_fit = conversao_ate_contratacao("Entrevista Fit", chapter_sel2, sen_sel2)
+    _, base_case, conv_case = conversao_ate_contratacao("Envio do Case Escrito", chapter_sel2, sen_sel2)
+    _, base_cv, _ = conversao_ate_contratacao("Avaliação de currículo", chapter_sel2, sen_sel2)
+    aceite_rec = taxa_aceite_oferta(mes_sel2, chapter_sel2, sen_sel2)
+    tx_rec = recorte(taxas_df, chapter_sel2, sen_sel2)
+    n_decididas = tx_rec["contratados"].sum() + tx_rec["recusas_oferta"].sum()
+    aceite_sys_rec = taxa_aceite_sys(mes_sel2, chapter_sel2, sen_sel2)
+    su_rec = recorte(su_ofertas_df, chapter_sel2, sen_sel2) if not su_ofertas_df.empty else su_ofertas_df
+    n_su = su_rec["candidaturas_sys"].sum() if not su_rec.empty else 0
+    n_su_aceites = su_rec["aceites_sys"].sum() if not su_rec.empty else 0
+    su_tempo_banco = su_tempo_medio_banco(chapter_sel2, sen_sel2)
 
-    if conversao_total is not None and n_contratados:
-        valor_conversao = f"1 a cada {_n(n_candidaturas / n_contratados)}"
-        nota_conversao = (
-            f"{_n(n_contratados)} contratações de {_n(n_candidaturas)} candidaturas "
-            f"({conversao_total:.2f}%), todo o histórico, todos os chapters."
-        )
+    if conv_fit is not None:
+        nota_fit = f"{_n(contr_fit)} contratações de {_n(base_fit)} candidaturas que chegaram à Entrevista Fit."
+        if conv_case is not None:
+            nota_fit += f" Desde o Envio do Case: {conv_case:.1f}%."
+        if contr_fit:
+            nota_fit += f" Desde o currículo: 1 a cada {_n(base_cv / contr_fit)}."
     else:
-        valor_conversao, nota_conversao = "—", "Sem contratações registradas."
+        nota_fit = "Ninguém chegou à Entrevista Fit neste recorte."
 
     pipe_kpi_cards = [
         (
-            "Candidaturas que viram contratação",
-            valor_conversao,
-            "",
-            nota_conversao,
+            "Entrevista Fit → contratação",
+            f"{conv_fit:.1f}%" if conv_fit is not None else "—",
+            nota_fit,
         ),
         (
-            "Aceite na etapa Oferta",
-            f"{aceite_geral_mes:.0f}%" if aceite_geral_mes is not None else "—",
-            _delta_pipe(aceite_geral_mes, aceite_geral_ant, mes_ant2),
-            f"{_n(n_contratados)} contratados de {_n(n_decididas)} pessoas que já tiveram "
-            "a oferta decidida (contratadas + reprovadas na Oferta). Quem ainda está em Oferta fica fora.",
+            "Oferta → contratação (aceite)",
+            f"{aceite_rec:.0f}%" if aceite_rec is not None else "—",
+            f"{_n(tx_rec['contratados'].sum())} contratados de {_n(n_decididas)} pessoas com a oferta já "
+            "decidida (contratadas + reprovadas na Oferta). Quem ainda está em Oferta fica fora.",
         ),
         (
-            "Banco See You Soon que vira contratação",
-            f"{aceite_sys_mes:.0f}%" if aceite_sys_mes is not None else "—",
-            _delta_pipe(aceite_sys_mes, aceite_sys_ant, mes_ant2),
+            "See You Soon → contratação",
+            f"{aceite_sys_rec:.0f}%" if aceite_sys_rec is not None else "—",
             f"{_n(n_su_aceites)} de {_n(n_su)} pessoas que passaram pelo banco aceitaram uma oferta.",
         ),
         (
             "Espera média no banco See You Soon",
             f"{su_tempo_banco:.0f} dias" if su_tempo_banco is not None else "—",
-            "",
             "Média entre as pessoas hoje aguardando no banco. O Greenhouse só informa o tempo "
             "médio por vaga, então cada pessoa recebe o valor da sua vaga.",
         ),
     ]
     st.markdown(
+        f'<div class="exec-kpi-scope">Recorte: <b>{rotulo_recorte}</b> · conversões no histórico inteiro do Greenhouse</div>'
         '<div class="exec-kpi-row">'
         + "".join(
             f'<div class="exec-kpi-card"><div class="exec-kpi-label">{label}</div>'
-            f'<div class="exec-kpi-value">{value}</div>{delta}'
+            f'<div class="exec-kpi-value">{value}</div>'
             f'<div class="exec-kpi-note">{note}</div></div>'
-            for label, value, delta, note in pipe_kpi_cards
+            for label, value, note in pipe_kpi_cards
         )
         + "</div>",
         unsafe_allow_html=True,
@@ -1652,34 +1960,43 @@ with tab_pipe:
 
     sla_calc = dfp_mes.dropna(subset=["excesso_dias"])
     n_crit_pipe = int((sla_calc["status_sla"] == "critico").sum())
-    partes_pipe = []
     if n_crit_pipe:
         top_gargalo_calc = sla_calc.sort_values("excesso_dias", ascending=False).iloc[0]
-        partes_pipe.append(
-            f"<b>{n_crit_pipe} etapa(s) em SLA crítico</b> — a pior é <b>{top_gargalo_calc['etapa']}</b> em {top_gargalo_calc['chapter']} "
-            f"({top_gargalo_calc['tempo_medio_dias']:.0f}d vs. meta de {top_gargalo_calc['meta_sla_dias']:.0f}d)"
+        texto_sla = (
+            f"<b>{n_crit_pipe} etapa(s) em SLA crítico</b>. A pior é <b>{top_gargalo_calc['etapa']}</b> em "
+            f"{top_gargalo_calc['chapter']} ({top_gargalo_calc['tempo_medio_dias']:.0f}d vs. meta de "
+            f"{top_gargalo_calc['meta_sla_dias']:.0f}d)"
         )
     else:
-        partes_pipe.append("Nenhuma etapa em SLA crítico neste mês")
-    render_finding(f"Em <b>{MES_LABELS[mes_sel2]}</b>: " + " · ".join(partes_pipe) + ".")
+        texto_sla = "Nenhuma etapa em SLA crítico"
+    render_finding(f"{rotulo_recorte[0].upper()}{rotulo_recorte[1:]}: {texto_sla}.")
 
     col_a, col_b = st.columns(2)
     with col_a:
-        st.markdown(f"##### Funil de volume — {chapter_sel2}")
-        st.caption("Quantos candidatos chegam vivos em cada etapa do processo, partindo do total de currículos recebidos.")
+        st.markdown("##### Funil de volume a partir do Envio do Case")
+        # Contratação fica fora: é o total histórico de contratados, e no
+        # meio do estoque de hoje aparecia como "116% do Envio do Case"
+        funil_vis = dfp_rec[(dfp_rec["ordem_etapa"] >= 2) & (dfp_rec["etapa"] != "Contratação")]
+        n_cv = int(dfp_rec.loc[dfp_rec["etapa"] == "Avaliação de currículo", "candidatos"].sum())
+        n_case_vis = funil_vis["candidatos"].iloc[0] if not funil_vis.empty else 0
+        st.caption(
+            "Candidatos vivos hoje em cada etapa; o % é sobre o Envio do Case. "
+            f"A triagem de currículo ({_n(n_cv)} hoje) fica fora para não achatar as outras etapas, e as "
+            f"contratações ({_n(contr_fit)} no histórico) estão no card Entrevista Fit → contratação."
+        )
         fig_funnel = go.Figure(
             go.Funnel(
-                y=dfp_chapter["etapa"],
-                x=dfp_chapter["candidatos"],
-                marker={"color": ARTEFACT_BLUE},
+                y=funil_vis["etapa"],
+                x=funil_vis["candidatos"],
+                marker={"color": azul_barra},
                 connector={"line": {"color": PAL["line"], "width": 1}},
-                textinfo="value+percent initial",
+                # com zero no Envio do Case o % vira "Infinity%": mostra só o número
+                textinfo="value+percent initial" if n_case_vis > 0 else "value",
                 hovertemplate=(
                     "<b>%{label}</b><br>"
-                    "Candidatos: <b>%{value}</b><br>"
-                    "%{percentInitial} do volume inicial de currículos<br>"
-                    "%{percentPrevious} vieram da etapa anterior"
-                    "<extra></extra>"
+                    "Candidatos: <b>%{value}</b>"
+                    + ("<br>%{percentInitial} do volume no Envio do Case" if n_case_vis > 0 else "")
+                    + "<extra></extra>"
                 ),
             )
         )
@@ -1687,13 +2004,13 @@ with tab_pipe:
         st.plotly_chart(fig_funnel, use_container_width=True)
 
     with col_b:
-        st.markdown(f"##### Conversão etapa a etapa — {chapter_sel2}")
+        st.markdown("##### Conversão etapa a etapa, a partir do currículo")
         st.caption(
-            "% de candidatos que avançam de uma etapa para a próxima — mostra onde a eficiência do processo é pior. "
-            "A taxa de aceite de oferta do chapter aparece logo abaixo do gráfico."
+            "Cada barra: % que chegou a esta etapa vindo da anterior (a primeira, Envio do Case, vem do "
+            "currículo). Taxa do Greenhouse, com teto de 100% por vaga."
         )
-        conv = dfp_chapter.dropna(subset=["conversao_pct"])
-        bar_colors = [PINK if et == "Contratação" else ARTEFACT_BLUE for et in conv["etapa"]]
+        conv = dfp_rec.dropna(subset=["conversao_pct"])
+        bar_colors = [PINK if et == "Contratação" else azul_barra for et in conv["etapa"]]
         fig_conv = go.Figure(
             go.Bar(
                 y=conv["etapa"],
@@ -1712,60 +2029,64 @@ with tab_pipe:
             fig_conv, use_container_width=True, on_select="rerun", selection_mode="points", key="conv_chart_sel"
         )
         chart_hint("Clique em uma barra para comparar essa etapa entre todos os chapters.")
-        aceite_chapter = taxa_aceite_oferta(mes_sel2, chapter_sel2)
-        if aceite_chapter is not None:
-            st.caption(f"🔑 Aceite na etapa Oferta em **{chapter_sel2}**: **{aceite_chapter:.0f}%**")
 
         etapa_click_conv = _clicked_category(conv_event)
-        guard_conv = f"{mes_sel2}|{etapa_click_conv}"
+        guard_conv = f"{mes_sel2}|{sen_sel2}|{etapa_click_conv}"
         if not etapa_click_conv:
             # seleção limpa (clique fora da barra): libera a mesma barra para
             # abrir o modal de novo no próximo clique
             st.session_state.pop("_last_conv_click", None)
         elif st.session_state.get("_last_conv_click") != guard_conv:
             st.session_state["_last_conv_click"] = guard_conv
-            show_conv_drilldown(etapa_click_conv, mes_sel2)
+            show_conv_drilldown(etapa_click_conv, mes_sel2, sen_sel2)
 
+    def _cores_destaque(chapters, cor):
+        """Destaca o chapter do filtro; os outros ficam apagados."""
+        if chapter_sel2 == TODOS:
+            return cor
+        return [cor if ch == chapter_sel2 else PAL["line"] for ch in chapters]
+
+    rotulo_sen = "todas as senioridades" if sen_sel2 == TODOS else sen_sel2
     col_ag, col_as = st.columns(2)
     with col_ag:
-        st.markdown("##### Aceite na etapa Oferta por carreira")
+        st.markdown("##### Oferta → contratação, por carreira")
         st.caption(
-            "Contratados / (contratados + reprovados na etapa Oferta), por chapter, no histórico do Greenhouse. "
-            "A recusa sai da etapa porque o Greenhouse não registra oferta recusada."
+            f"Compara chapters ({rotulo_sen}). "
+            "Contratados / (contratados + reprovados na etapa Oferta), no histórico do Greenhouse."
         )
-        chapters_aceite = sorted(farol_df["chapter"].unique())
-        aceite_vals = [taxa_aceite_oferta(mes_sel2, ch) for ch in chapters_aceite]
+        chapters_aceite = sorted(taxas_df["chapter"].unique())
+        aceite_vals = [taxa_aceite_oferta(mes_sel2, ch, sen_sel2) for ch in chapters_aceite]
         fig_aceite_geral = go.Figure(
             go.Bar(
                 x=chapters_aceite,
                 y=[v if v is not None else 0 for v in aceite_vals],
-                marker_color=ARTEFACT_BLUE,
+                marker_color=_cores_destaque(chapters_aceite, azul_barra),
                 text=[f"{v:.0f}%" if v is not None else "—" for v in aceite_vals],
                 textposition="outside",
-                hovertemplate="<b>%{x}</b><br>Aceite geral: <b>%{y:.0f}%</b><extra></extra>",
+                hovertemplate="<b>%{x}</b><br>Aceite: <b>%{y:.0f}%</b><extra></extra>",
             )
         )
         fig_aceite_geral.update_layout(
             height=300,
-            yaxis=dict(range=[0, 100], **CHART_LAYOUT["yaxis"]),
+            yaxis=dict(range=[0, 110], **CHART_LAYOUT["yaxis"]),
             **{k: v for k, v in CHART_LAYOUT.items() if k != "yaxis"},
         )
         st.plotly_chart(fig_aceite_geral, use_container_width=True)
 
     with col_as:
-        st.markdown("##### Banco See You Soon que vira contratação, por carreira")
+        st.markdown("##### See You Soon → contratação, por carreira")
         st.caption(
-            "% das pessoas que passaram pelo banco See You Soon e aceitaram oferta, por chapter. "
-            "Não é taxa de aceite: o Greenhouse não registra oferta recusada do banco."
+            f"Compara chapters ({rotulo_sen}). "
+            "% das pessoas que passaram pelo banco e aceitaram oferta."
         )
         chapters_sys = sorted(su_ofertas_df["chapter"].unique()) if not su_ofertas_df.empty else []
         if chapters_sys:
-            aceite_sys_vals = [taxa_aceite_sys(mes_sel2, ch) for ch in chapters_sys]
+            aceite_sys_vals = [taxa_aceite_sys(mes_sel2, ch, sen_sel2) for ch in chapters_sys]
             fig_aceite_sys = go.Figure(
                 go.Bar(
                     x=chapters_sys,
                     y=[v if v is not None else 0 for v in aceite_sys_vals],
-                    marker_color=PINK,
+                    marker_color=_cores_destaque(chapters_sys, PINK),
                     text=[f"{v:.0f}%" if v is not None else "—" for v in aceite_sys_vals],
                     textposition="outside",
                     hovertemplate="<b>%{x}</b><br>Conversão do banco: <b>%{y:.0f}%</b><extra></extra>",
@@ -1773,7 +2094,7 @@ with tab_pipe:
             )
             fig_aceite_sys.update_layout(
                 height=300,
-                yaxis=dict(range=[0, 100], **CHART_LAYOUT["yaxis"]),
+                yaxis=dict(range=[0, 110], **CHART_LAYOUT["yaxis"]),
                 **{k: v for k, v in CHART_LAYOUT.items() if k != "yaxis"},
             )
             st.plotly_chart(fig_aceite_sys, use_container_width=True)
@@ -1781,44 +2102,56 @@ with tab_pipe:
             render_note("Sem dado do banco See You Soon.", variant="neutral")
 
     st.markdown("##### Candidatos por etapa × chapter (heatmap)")
-    st.caption("Concentração de candidatos parados em cada etapa — células mais escuras indicam mais gente aguardando ali, em qualquer chapter.")
-    pivot = dfp_mes.pivot_table(index="chapter", columns="etapa", values="candidatos", aggfunc="sum")
-    pivot = pivot.reindex(columns=[s for s in STAGES_ORDER if s in pivot.columns])
-    fig_heat = px.imshow(
-        pivot,
-        text_auto=True,
-        color_continuous_scale=brand_heat_scale(),
-        aspect="auto",
-        labels=dict(color="Candidatos"),
+    st.caption(
+        "Candidatos vivos hoje em cada etapa, do Envio do Case até a Oferta, no recorte escolhido. Células "
+        "mais escuras indicam mais gente aguardando ali. A triagem de currículo fica na faixa abaixo, só para "
+        "monitoramento: com milhares de currículos, ela dominava a escala e apagava as outras etapas. "
+        "Contratação também fica fora, porque é histórico, não gente aguardando."
     )
-    fig_heat.update_traces(
-        hovertemplate="<b>%{y}</b> · %{x}<br>Candidatos parados: <b>%{z}</b><extra></extra>"
+    # Triagem de currículo: só monitoramento, fora da escala de cor
+    triagem = (
+        dfp_mes[dfp_mes["etapa"] == "Avaliação de currículo"]
+        .groupby("chapter")["candidatos"].sum()
+        .sort_values(ascending=False)
     )
-    fig_heat.update_layout(height=320, **CHART_LAYOUT)
-    st.plotly_chart(fig_heat, use_container_width=True)
+    if not triagem.empty:
+        st.markdown(
+            '<div class="triagem-row"><span class="triagem-lbl">Triagem de currículo · monitoramento</span>'
+            + "".join(
+                f'<span class="triagem-chip">{ch} <b>{_n(v)}</b></span>' for ch, v in triagem.items()
+            )
+            + "</div>",
+            unsafe_allow_html=True,
+        )
+    etapas_heat = [
+        s for s in STAGES_ORDER if s not in ("Avaliação de currículo", "Contratação")
+    ]
+    pivot = dfp_mes[dfp_mes["etapa"].isin(etapas_heat)].pivot_table(
+        index="chapter", columns="etapa", values="candidatos", aggfunc="sum"
+    )
+    pivot = pivot.reindex(columns=[s for s in etapas_heat if s in pivot.columns])
+    if pivot.empty:
+        render_note("Ninguém do Envio do Case em diante neste recorte.", variant="neutral")
+    else:
+        fig_heat = px.imshow(
+            pivot,
+            text_auto=True,
+            color_continuous_scale=brand_heat_scale(),
+            aspect="auto",
+            labels=dict(color="Candidatos", x="", y=""),
+        )
+        fig_heat.update_traces(
+            hovertemplate="<b>%{y}</b> · %{x}<br>Candidatos: <b>%{z}</b><extra></extra>"
+        )
+        fig_heat.update_layout(height=max(160, 55 * len(pivot) + 60), **CHART_LAYOUT)
+        st.plotly_chart(fig_heat, use_container_width=True)
 
     st.markdown("##### Volume de candidatos por etapa e por nível")
     st.caption(
-        "O heatmap acima cobre os 6 chapters do Greenhouse; aqui o recorte é por senioridade e limitado aos "
-        "4 chapters com demanda cadastrada no Artefactory (Software Engineering e AI Engineering entram "
-        "dentro de Data Engineering na Visão Gerencial e no Farol Executivo). 🔺 marca combinações com "
-        "volume bem acima do normal para aquela etapa neste mês."
+        "Mesmo recorte dos filtros do topo, aberto por chapter × senioridade. 🔺 marca combinações com "
+        "volume bem acima do normal para aquela etapa."
     )
-    col_f1, col_f2 = st.columns(2)
-    with col_f1:
-        carreira_filtro = st.selectbox(
-            "Carreira", ["Todas"] + sorted(pipe_nivel_df["chapter"].unique()), key="filtro_carreira_nivel"
-        )
-    with col_f2:
-        senioridade_filtro = st.selectbox(
-            "Senioridade", ["Todas"] + SENIORIDADE_ORDER, key="filtro_senioridade_nivel"
-        )
-
-    nivel_mes = pipe_nivel_df[pipe_nivel_df["mes"] == mes_sel2].copy()
-    if carreira_filtro != "Todas":
-        nivel_mes = nivel_mes[nivel_mes["chapter"] == carreira_filtro]
-    if senioridade_filtro != "Todas":
-        nivel_mes = nivel_mes[nivel_mes["senioridade"] == senioridade_filtro]
+    nivel_mes = nivel_rec
 
     if nivel_mes.empty:
         render_note("Sem dado de volume por nível para este recorte.", variant="neutral")
@@ -1850,24 +2183,28 @@ with tab_pipe:
         tabela_nivel = pd.DataFrame(table_rows)
         render_table(tabela_nivel, numeric_cols=set(etapa_cols))
 
-    st.markdown("##### Tempo médio por etapa (todos os chapters)")
-    st.caption("Dias corridos que um candidato permanece em cada etapa — média entre os chapters, neste mês.")
-    tempo_agg = (
-        dfp_mes.dropna(subset=["tempo_medio_dias"])
-        .groupby("etapa", as_index=False)["tempo_medio_dias"].mean()
+    st.markdown("##### Tempo médio por etapa")
+    st.caption(
+        "Dias corridos que um candidato fica em cada etapa, no recorte escolhido (média do Greenhouse por vaga, "
+        "ponderada pelas candidaturas). **Oferta e See You Soon ficam separadas**: a barra rosa é o tempo no "
+        "banco See You Soon e não entra na média da Oferta. Uma Oferta longa pode ser negociação demorada ou "
+        "registro não atualizado no Greenhouse."
     )
-    tempo_agg["ordem_etapa"] = tempo_agg["etapa"].map(
-        {s: i for i, s in enumerate(STAGES_ORDER)}
-    )
-    tempo_agg = tempo_agg.sort_values("ordem_etapa")
+    tempo_agg = dfp_rec.dropna(subset=["tempo_medio_dias"])[["etapa", "tempo_medio_dias"]].copy()
+    tempo_agg["cor"] = azul_barra
+    if su_tempo_banco is not None:
+        linha_su = pd.DataFrame(
+            [{"etapa": ETAPA_SU, "tempo_medio_dias": round(su_tempo_banco, 1), "cor": PINK}]
+        )
+        tempo_agg = pd.concat([tempo_agg, linha_su], ignore_index=True)
     if tempo_agg.empty:
-        render_note("Sem dado de tempo médio para este mês.", variant="neutral")
+        render_note("Sem dado de tempo médio para este recorte.", variant="neutral")
     else:
         fig_tempo_agg = go.Figure(
             go.Bar(
                 x=tempo_agg["etapa"],
                 y=tempo_agg["tempo_medio_dias"],
-                marker_color=ARTEFACT_BLUE,
+                marker_color=list(tempo_agg["cor"]),
                 text=tempo_agg["tempo_medio_dias"].map(lambda v: f"{v:.1f}d"),
                 textposition="outside",
                 hovertemplate="<b>%{x}</b><br>Tempo médio: <b>%{y:.1f} dias</b><extra></extra>",
@@ -1879,22 +2216,32 @@ with tab_pipe:
         tempo_event = st.plotly_chart(
             fig_tempo_agg, use_container_width=True, on_select="rerun", selection_mode="points", key="tempo_chart_sel"
         )
-        chart_hint("Clique em uma barra para ver a quebra por chapter.")
+        chart_hint(
+            "Clique em uma barra azul para ver a quebra por chapter, ou na rosa para ver quem está no banco."
+        )
 
         etapa_click_tempo = _clicked_category(tempo_event, axis="x")
-        guard_tempo = f"{mes_sel2}|{etapa_click_tempo}"
+        guard_tempo = f"{mes_sel2}|{sen_sel2}|{etapa_click_tempo}"
         if not etapa_click_tempo:
             st.session_state.pop("_last_tempo_click", None)
-        elif st.session_state.get("_last_tempo_click") != guard_tempo:
-            st.session_state["_last_tempo_click"] = guard_tempo
-            show_tempo_drilldown(etapa_click_tempo, mes_sel2)
+        elif st.session_state.get("_last_tempo_click") != f"{guard_tempo}|{chapter_sel2}":
+            st.session_state["_last_tempo_click"] = f"{guard_tempo}|{chapter_sel2}"
+            if etapa_click_tempo == ETAPA_SU:
+                show_su_drilldown(chapter_sel2, sen_sel2)
+            else:
+                show_tempo_drilldown(etapa_click_tempo, mes_sel2, sen_sel2)
 
     st.markdown("##### Candidatos parados por etapa")
     st.caption(
-        "Candidatos em atenção e crítico em cada etapa do funil, somando todas as vagas abertas."
+        "Candidatos em atenção e crítico em cada etapa do funil, no recorte escolhido. Antes de agir, confira "
+        "no Greenhouse: etapa desatualizada (ex.: pessoa já contratada ainda em Conversa Final) aparece aqui como parada."
     )
 
-    parados_mes = parados_df[parados_df["mes"] == mes_sel2] if not parados_df.empty else parados_df
+    parados_mes = (
+        recorte(parados_df[parados_df["mes"] == mes_sel2], chapter_sel2, sen_sel2)
+        if not parados_df.empty
+        else parados_df
+    )
     n_cand_critico = int((parados_mes["status"] == "critico").sum()) if not parados_mes.empty else 0
     n_cand_atencao = int((parados_mes["status"] == "atencao").sum()) if not parados_mes.empty else 0
     n_cand_ativos = int(dfp_mes[dfp_mes["etapa"] != "Contratação"]["candidatos"].sum())
@@ -1967,9 +2314,9 @@ with tab_pipe:
         st.markdown(
             f'<div class="legend-row">'
             f'<div class="legend-item"><span class="legend-dot" style="background:{AMBER}"></span>'
-            f"Atenção — dias no pipe acima da soma das metas até a etapa</div>"
+            f"Atenção: dias no pipe acima da soma das metas até a etapa</div>"
             f'<div class="legend-item"><span class="legend-dot" style="background:{RED}"></span>'
-            f"Crítico — mais de 5 dias acima dessa soma</div>"
+            f"Crítico: mais de 5 dias acima dessa soma</div>"
             f"</div>",
             unsafe_allow_html=True,
         )
@@ -1983,7 +2330,10 @@ with tab_pipe:
 
     st.divider()
     st.markdown("##### Gargalos e SLA")
-    st.caption("Etapas com tempo médio acima da meta definida, ordenadas da mais crítica para a menos crítica.")
+    st.caption(
+        f"Tempo médio de cada etapa contra a meta, por chapter, no recorte escolhido ({rotulo_recorte}). "
+        "Na ordem do funil, chapter por chapter; o pior gargalo aparece destacado abaixo da tabela."
+    )
 
     status_counts = sla_calc["status_sla"].value_counts()
     resumo_status = [
@@ -1997,7 +2347,7 @@ with tab_pipe:
             f'<div class="exec-kpi-card" style="text-align:center;">'
             f'<div class="exec-kpi-label" style="color:{color}">{label}</div>'
             f'<div class="exec-kpi-value" style="color:{color}">{count}</div>'
-            f'<div class="exec-kpi-note">combinações chapter × etapa neste mês</div></div>'
+            f'<div class="exec-kpi-note">combinações chapter × etapa no recorte</div></div>'
             for label, count, color in resumo_status
         )
         + "</div>",
@@ -2005,16 +2355,15 @@ with tab_pipe:
     )
 
     sla_df = dfp_mes.dropna(subset=["excesso_dias"]).copy()
-    sla_df = sla_df[
+    # ordem do funil, não do excesso: lida etapa a etapa, a tabela mostra
+    # onde o processo trava; o pior caso vai para o alerta logo abaixo
+    pior_sla = sla_df.sort_values("excesso_dias", ascending=False).head(1)
+    sla_df = sla_df.sort_values(["chapter", "ordem_etapa"])[
         ["chapter", "etapa", "tempo_medio_dias", "meta_sla_dias", "excesso_dias", "status_sla"]
-    ].sort_values("excesso_dias", ascending=False)
+    ]
     sla_df.columns = ["Chapter", "Etapa", "Tempo médio (dias)", "Meta (dias)", "Excesso (dias)", "Status"]
 
     STATUS_SLA_LABEL = {"critico": "🔴 CRÍTICO", "atencao": "🟡 ATENÇÃO", "ok": "🟢 OK"}
-    sla_df["Tendência"] = [
-        sparkline_svg(pipe_trend(ch, et), RED if exc > 0 else GREEN)
-        for ch, et, exc in zip(sla_df["Chapter"], sla_df["Etapa"], sla_df["Excesso (dias)"])
-    ]
     sla_df["Tempo médio (dias)"] = sla_df["Tempo médio (dias)"].map(lambda v: f"{v:.1f}")
     sla_df["Meta (dias)"] = sla_df["Meta (dias)"].map(lambda v: f"{v:.0f}")
     sla_df["Excesso (dias)"] = sla_df["Excesso (dias)"].map(lambda v: f"{v:+.1f}")
@@ -2023,28 +2372,247 @@ with tab_pipe:
     render_table(
         sla_df,
         numeric_cols={"Tempo médio (dias)", "Meta (dias)", "Excesso (dias)"},
-        center_cols={"Tendência"},
         help_map={
-            "Tempo médio (dias)": "Tempo médio corrido que um candidato permanece nesta etapa, neste mês.",
+            "Tempo médio (dias)": "Tempo médio corrido que um candidato permanece nesta etapa (média do Greenhouse por vaga).",
             "Meta (dias)": "SLA alvo definido para esta etapa.",
             "Excesso (dias)": "Tempo médio − meta. Negativo significa que a etapa está dentro do prazo.",
             "Status": "🔴 Crítico: excesso > 5 dias · 🟡 Atenção: até 5 dias de excesso · 🟢 OK: dentro da meta.",
-            "Tendência": "Evolução do tempo médio nesta etapa ao longo dos meses disponíveis.",
         },
     )
 
-    top_gargalo = sla_df.iloc[0]
-    if top_gargalo["Status"] == STATUS_SLA_LABEL["critico"]:
+    top_gargalo = pior_sla.iloc[0] if not pior_sla.empty else None
+    if top_gargalo is not None and top_gargalo["status_sla"] == "critico":
         render_note(
-            f"🔴 <b>Gargalo crítico:</b> {top_gargalo['Etapa']} em {top_gargalo['Chapter']} — "
-            f"{top_gargalo['Tempo médio (dias)']} dias vs. meta de {top_gargalo['Meta (dias)']} dias.",
+            f"🔴 <b>Pior gargalo:</b> {top_gargalo['etapa']} em {top_gargalo['chapter']}: "
+            f"{top_gargalo['tempo_medio_dias']:.1f} dias vs. meta de {top_gargalo['meta_sla_dias']:.0f} dias.",
             variant="critical",
         )
+
+# ---------------------------------------------------------------------------
+# TAB 3 · COMO LER
+# Glossário escrito a partir das regras do código. Quando uma regra mudar
+# (farol_status, oferta, SLA), atualizar o texto aqui junto.
+# ---------------------------------------------------------------------------
+def _secao(icone: str, titulo: str, subtitulo: str = "") -> None:
+    st.markdown(
+        f'<div class="cl-secao"><span class="cl-secao-ico">{icone}</span>'
+        f'<div><div class="cl-secao-tit">{titulo}</div>'
+        + (f'<div class="cl-secao-sub">{subtitulo}</div>' if subtitulo else "")
+        + "</div></div>",
+        unsafe_allow_html=True,
+    )
+
+
+def _termos(itens: list) -> None:
+    """Lista de termos: nome à esquerda, explicação à direita."""
+    st.markdown(
+        '<div class="cl-lista">'
+        + "".join(
+            f'<div class="cl-termo"><div class="cl-termo-nome">{nome}</div>'
+            f'<div class="cl-termo-def">{definicao}</div></div>'
+            for nome, definicao in itens
+        )
+        + "</div>",
+        unsafe_allow_html=True,
+    )
+
+
+with tab_ajuda:
+    st.markdown(
+        '<div class="cl-hero">'
+        '<div class="cl-hero-tit">📖 Como ler o Farol</div>'
+        '<div class="cl-hero-txt">O que cada aba responde, como cada número é calculado, de onde vêm os '
+        "dados e o que eles ainda não conseguem dizer. As explicações curtas continuam nos (?) das tabelas "
+        "e nas legendas dos gráficos. Aqui está tudo junto.</div></div>",
+        unsafe_allow_html=True,
+    )
+
+    # ---- as abas ----------------------------------------------------------
+    _secao("🗂️", "As abas", "Cada uma responde a uma pergunta.")
+    abas = [
+        ("🧭", "Visão Gerencial", "Quanto falta contratar no mês e com que velocidade o funil entrega?",
+         "Necessidade líquida, pipe qualificado, tempo médio de contratação e aceite de oferta."),
+        ("🚦", "Farol Executivo", "Devo abrir, manter ou pausar vagas? Em qual carreira e senioridade?",
+         "Matriz carreira × senioridade e o detalhe de demanda × oferta de cada chapter."),
+        ("📈", "Visão do Pipe", "Onde o processo trava?",
+         "Conversões, funil, tempos, parados e SLA. Os filtros do topo valem para a aba inteira."),
+    ]
+    st.markdown(
+        '<div class="cl-abas">'
+        + "".join(
+            f'<div class="cl-aba"><div class="cl-aba-ico">{ico}</div>'
+            f'<div class="cl-aba-nome">{nome}</div><div class="cl-aba-perg">{perg}</div>'
+            f'<div class="cl-aba-txt">{txt}</div></div>'
+            for ico, nome, perg, txt in abas
+        )
+        + "</div>",
+        unsafe_allow_html=True,
+    )
+
+    # ---- o farol ----------------------------------------------------------
+    _secao("🚦", "Como o farol decide", "As regras são testadas nesta ordem, por carreira × senioridade.")
+    passos = [
+        ("manter", "1", f"Diferença menor que {GAP_MINIMO_PESSOAS:.0f} pessoa", "Manter"),
+        ("pausar", "2", "Demanda zero ou negativa", "Pausar"),
+        ("acelerar", "3", "Gap % acima de +20%", "Acelerar"),
+        ("manter", "3", "Gap % entre −10% e +20%", "Manter"),
+        ("pausar", "3", "Gap % abaixo de −10%", "Pausar"),
+    ]
+    st.markdown(
+        '<div class="cl-regras">'
+        + "".join(
+            f'<div class="cl-regra" style="--cl-cor:{STATUS_COLOR[s]}; --cl-bg:{STATUS_BG[s]}">'
+            f'<div class="cl-regra-n">{n}</div><div class="cl-regra-cond">{cond}</div>'
+            f'<div class="cl-regra-res"><span class="cl-dot"></span>{res}</div></div>'
+            for s, n, cond, res in passos
+        )
+        + "</div>",
+        unsafe_allow_html=True,
+    )
+    _termos([
+        ("Pedido dos projetos",
+         "Quanto os projetos pedem de gente no mês, segundo o Artefactory. Vem em FTE: 1 FTE é uma pessoa "
+         "em tempo integral, 0,5 é meio período."),
+        ("Desalocados",
+         "Pessoas que saem de projeto no mês, na mesma carreira e nível, e podem ser realocadas em vez de "
+         "contratar alguém. Também vêm do Artefactory."),
+        ("Demanda líquida",
+         "Pedido dos projetos menos desalocados: o que sobra para contratar. É ela que o farol compara com a "
+         "oferta, e o app trata 1 FTE como 1 pessoa. Fica negativa quando sai mais gente de projeto do que "
+         "entra. A matriz, o detalhe e a Visão Gerencial mostram as três partes."),
+        ("Oferta ajustada",
+         f"Quantas contratações o pipe de hoje deve entregar em até {HORIZONTE_FAROL_DIAS} dias. Soma os "
+         "candidatos vivos do <b>Envio do Case em diante</b>, cada um pesado pela chance de chegar à "
+         "contratação. A triagem de currículo e o banco See You Soon não entram."),
+        ("Gap",
+         "Demanda líquida menos oferta ajustada. Positivo quer dizer que <b>falta</b> gente; negativo, que "
+         "<b>sobra</b>. O Gap % divide o gap pela demanda e só aparece com demanda de 1 pessoa ou mais."),
+        ("Status por senioridade",
+         "Somar as senioridades esconde decisões opostas: um chapter pode sobrar Entry e faltar Senior ao "
+         "mesmo tempo. Por isso o \"Total do chapter\" mostra só os números, sem status."),
+        ("Entry, Senior e Estagiário",
+         "A decisão de contratação olha Entry e Senior. Estagiário aparece apagado, para acompanhamento, "
+         "porque segue o ritmo das turmas de estágio. Entry inclui os níveis Entry e Associate do Artefactory "
+         "e as vagas do Greenhouse sem nível no nome."),
+        ("Mês da demanda",
+         f"Só a demanda muda com o mês. O app mostra o mês atual e os {JANELA_MESES} seguintes. O pipe é "
+         "sempre a foto de hoje, então a oferta é a mesma em todos os meses."),
+        ("Pipe qualificado",
+         "Candidatos vivos hoje da Entrevista Fit até a Oferta, ou seja, quem já passou da triagem e do case."),
+    ])
+
+    # ---- conversões e tempos ---------------------------------------------
+    _secao("🔁", "Conversões e tempos", "Toda conversão diz em que etapa começa a conta.")
+    _termos([
+        ("Entrevista Fit → contratação",
+         "Contratados divididos pelas candidaturas que chegaram à Entrevista Fit, no histórico inteiro do "
+         "Greenhouse. É a conversão principal porque começa depois da triagem. O card também mostra a conta "
+         "desde o Envio do Case e desde o currículo."),
+        ("Conversão etapa a etapa",
+         "Quantos % chegaram a uma etapa vindos da anterior, segundo o Greenhouse. Quando candidatos pulam "
+         "etapas o número do Greenhouse passa de 100%, então o app limita cada vaga a 100%."),
+        ("Oferta → contratação",
+         "Contratados divididos por contratados mais reprovados na etapa Oferta. Quem ainda está em Oferta "
+         "fica fora, porque não decidiu. O Greenhouse não registra oferta recusada, então a recusa é quem "
+         "saiu do processo estando na Oferta."),
+        ("See You Soon → contratação",
+         "Pessoas que passaram pelo banco See You Soon e aceitaram uma oferta, divididas por todas que "
+         "passaram pelo banco. Não é taxa de aceite: o banco não registra oferta recusada."),
+        ("Espera no See You Soon",
+         "Dias que quem está aguardando hoje já passou no banco. O Greenhouse só dá a média por vaga, então "
+         "pessoas da mesma vaga têm o mesmo número. Clique na barra rosa do tempo por etapa para ver a lista."),
+        ("Tempo médio por etapa",
+         "Dias corridos que um candidato fica em cada etapa, pela média do Greenhouse por vaga, ponderada "
+         "pelas candidaturas. O See You Soon tem barra própria e não entra na média da Oferta."),
+        ("Tempo médio de contratação",
+         "Média de dias no pipe das pessoas contratadas. Não é a soma dos tempos de cada etapa, que inclui "
+         "quem ficou parado e foi reprovado."),
+    ])
+
+    # ---- metas -------------------------------------------------------------
+    _secao("⏱️", "Metas, parados e gargalos", "Meta de dias em cada etapa do funil.")
+    metas = [
+        ("Avaliação de currículo", 30), ("Envio do Case", 3), ("Avaliação do case", 3),
+        ("Entrevista Fit", 20), ("Técnica 1", 10), ("Técnica 2", 7), ("Conversa Final", 7), ("Oferta", 7),
+    ]
+    st.markdown(
+        '<div class="cl-metas">'
+        + "".join(
+            f'<div class="cl-meta"><div class="cl-meta-d">{d}d</div><div class="cl-meta-e">{e}</div></div>'
+            for e, d in metas
+        )
+        + "</div>",
+        unsafe_allow_html=True,
+    )
+    _termos([
+        ("Candidato parado",
+         "Compara os dias no pipe com a soma das metas até a etapa em que a pessoa está. Acima da soma, "
+         "<b>atenção</b>. Mais de 5 dias acima, <b>crítico</b>. O Greenhouse não dá o tempo por etapa de cada "
+         "pessoa, por isso a conta usa o tempo no pipe inteiro."),
+        ("Gargalos e SLA",
+         "Tempo médio de cada etapa contra a meta, por chapter. Acima da meta, atenção. Mais de 5 dias acima, "
+         "crítico. A tabela segue a ordem do funil, e o pior caso aparece no alerta logo abaixo dela."),
+    ])
+
+    # ---- dados ---------------------------------------------------------------
+    _secao("🗄️", "De onde vêm os dados")
+    fontes = [
+        ("Demanda", "Artefactory",
+         "Pedidos de projeto e desalocações, carregados por upload manual no BigQuery. O farol fica tão "
+         "atual quanto o último upload."),
+        ("Pipe", "Greenhouse",
+         f"Foto do dia (hoje: <b>{DATA_SNAPSHOT}</b>). O Greenhouse não guarda histórico por etapa, então não "
+         "há evolução mês a mês do funil."),
+        ("Acesso", "Google + BigQuery",
+         "Login com Google e lista de e-mails autorizados, mantida no BigQuery pelo time de Dados."),
+    ]
+    st.markdown(
+        '<div class="cl-abas">'
+        + "".join(
+            f'<div class="cl-aba"><div class="cl-fonte-tag">{tag}</div>'
+            f'<div class="cl-aba-nome">{nome}</div><div class="cl-aba-txt">{txt}</div></div>'
+            for tag, nome, txt in fontes
+        )
+        + "</div>",
+        unsafe_allow_html=True,
+    )
+
+    # ---- limites -------------------------------------------------------------
+    _secao("⚠️", "O que os números ainda não dizem", "Leve isto em conta antes de decidir.")
+    limites = [
+        ("Realocações que o farol não vê",
+         "O desconto de desalocados vale só dentro da mesma carreira e nível, e só para saídas lançadas no "
+         "Artefactory. Quem muda de carreira ou nível, ou sai de projeto sem estar lançado, não entra. Os "
+         "meses mais distantes costumam ter poucas desalocações lançadas, então a demanda líquida deles tende "
+         "a vir alta."),
+        ("Carreiras sem farol",
+         "AI Engineering e Software Engineering têm pipe no Greenhouse, mas nenhuma demanda no Artefactory. "
+         "Aparecem na Visão do Pipe, não no Farol."),
+        ("Etapas desatualizadas",
+         "Quem avançou ou foi contratado sem a etapa atualizada no Greenhouse aparece como parado e distorce "
+         "tempos e gargalos. Confira no Greenhouse antes de agir."),
+        ("Premissa a confirmar",
+         "A demanda vem em FTE (alocação fracionada) e o pipe vem em pessoas. O app trata 1 FTE como 1 "
+         "contratação, o que ainda falta confirmar com Staffing."),
+        ("Senioridade pelo nome da vaga",
+         "O Greenhouse não tem campo de senioridade, então ela sai do nome da vaga. Vaga sem nível no nome "
+         f"aparece como \"{SEM_SENIORIDADE}\" e fica fora do farol."),
+    ]
+    st.markdown(
+        '<div class="cl-limites">'
+        + "".join(
+            f'<div class="cl-limite"><div class="cl-limite-tit">{tit}</div>'
+            f'<div class="cl-limite-txt">{txt}</div></div>'
+            for tit, txt in limites
+        )
+        + "</div>",
+        unsafe_allow_html=True,
+    )
 
 st.markdown(
     f"""
     <div class="brand-footer">
-        Farol de Hiring · Artefact People &amp; Talent — Greenhouse (pipe) + Artefactory (demanda)
+        Farol de Hiring · Artefact People &amp; Talent · Greenhouse (pipe) + Artefactory (demanda)
     </div>
     """,
     unsafe_allow_html=True,

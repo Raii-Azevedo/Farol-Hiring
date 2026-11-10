@@ -83,7 +83,7 @@ etapa_depara AS (
 -- Carreira e nível saem do job_name, que é o único lugar onde existem nas
 -- views oficiais. O padrão real é o código entre colchetes — muito mais
 -- confiável que procurar palavra solta no texto:
---     [DS BR] - Data Scientist Brazil            -> Data Science, Pleno
+--     [DS BR] - Data Scientist Brazil            -> Data Science, Entry
 --     [DS BR] - Intern Data Scientist Brazil     -> Data Science, Estagiário
 --     [DS BR] - Senior Data Scientist Brazil     -> Data Science, Senior
 -- Os níveis observados são só três: Intern, sem marca, e Senior.
@@ -120,7 +120,7 @@ vaga AS (
       WHEN chapter IS NULL THEN NULL
       WHEN REGEXP_CONTAINS(job_name, r'(?i)\b(intern|estagi[áa]ri[oa])\b')  THEN 'Estagiário'
       WHEN REGEXP_CONTAINS(job_name, r'(?i)(\bsenior\b|\bs[êe]nior\b|\bsr\b)') THEN 'Senior'
-      ELSE 'Pleno'
+      ELSE 'Entry'   -- vaga sem marcador de nível = Entry (antes chamado Pleno)
     END AS senioridade
   FROM (
     SELECT
@@ -163,9 +163,12 @@ conversao_etapa AS (
   -- O separador real é '-->' (descoberta #2, out/2026). Se mudar, isso
   -- desalinha uma etapa EM SILÊNCIO. Rodar o QA 3 no fim do arquivo.
   -- conversion_rate vem como fração (média ~0,86), mas há valores > 1
-  -- (máx. 15) — CONFIRMAR com o time de Dados o que significam.
+  -- (máx. 15): quem chegou no destino ÷ quem estava na etapa anterior, e
+  -- candidatos que pulam etapas (direto para Fit, Oferta sem Técnica 2)
+  -- inflam o numerador. Teto de 1 POR VAGA, antes da média — senão uma
+  -- vaga com 1500% puxa o chapter inteiro (DS Fit dava 291%).
   SELECT TRIM(c.job_name) AS job_name, e.etapa,
-         AVG(c.conversion_rate) * 100 AS conversao_pct
+         AVG(LEAST(c.conversion_rate, 1)) * 100 AS conversao_pct
   FROM `br-in-dataplatform.greenhouse_dev.greenhouse_v_stage_conversion_by_job` c
   JOIN etapa_depara e
     ON e.stage_name = TRIM(SPLIT(c.job_stage_conversion_names, '-->')[SAFE_OFFSET(1)])

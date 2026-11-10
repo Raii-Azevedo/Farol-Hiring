@@ -109,7 +109,7 @@ def _auth_shell(pal: dict, gradient_css: str, logo_html: str, body_html: str) ->
 def render_login_screen(pal: dict, gradient_css: str, logo_html: str) -> None:
     body = f"""
         <p style="color:{pal['muted']};font-size:13.5px;line-height:1.7;text-align:center;margin-bottom:4px;">
-            Leitura do ritmo de contratação por chapter e senioridade — acesso restrito ao time de
+            Leitura do ritmo de contratação por chapter e senioridade. Acesso restrito ao time de
             People &amp; Talent da Artefact. Faça login com sua conta Google corporativa.
         </p>
     """
@@ -161,7 +161,7 @@ def render_allowlist_indisponivel(pal: dict, gradient_css: str, logo_html: str, 
             <p style="color:{pal['muted']};font-size:13px;line-height:1.7;margin:0;">
                 O Farol não conseguiu ler a lista de usuários autorizados
                 (<code>{ALLOWLIST}</code>, no BigQuery). Isso não quer dizer que você
-                não tem acesso — quer dizer que não deu para confirmar agora.<br><br>
+                não tem acesso, só que não deu para confirmar agora.<br><br>
                 Por segurança, o acesso fica bloqueado até a verificação voltar.
                 Avise o time de Dados.
             </p>
@@ -181,11 +181,11 @@ def require_login_and_authorization(pal: dict, gradient_css: str, logo_html: str
     if not _auth_configured():
         st.warning(
             "🔓 Autenticação Google não configurada neste ambiente "
-            "(.streamlit/secrets.toml ausente ou sem `[auth]`) — rodando em modo aberto, "
+            "(.streamlit/secrets.toml ausente ou sem `[auth]`). Rodando em modo aberto, "
             "sem checagem de login. Configure antes de usar com dados reais (ver README).",
             icon="⚠️",
         )
-        return {"email": "dev@local (modo aberto)", "name": "Modo dev — sem autenticação", "role": None}
+        return {"email": "dev@local (modo aberto)", "name": "Modo dev, sem autenticação", "role": None}
 
     if not st.user.is_logged_in:
         render_login_screen(pal, gradient_css, logo_html)

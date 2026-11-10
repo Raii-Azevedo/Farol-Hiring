@@ -38,21 +38,21 @@ WITH
 --   ZERO linha nas duas views de demanda — para esses dois o farol não
 --   fecha, só o diagnóstico de funil.
 --
--- CONFIRMAR com STF: 'Consulting' do Artefactory é o mesmo chapter que
--- 'Data Consultant' do Greenhouse? É a maior incerteza deste de-para.
+-- 'Consulting' do Artefactory é o chapter 'Data Consultant' do Greenhouse:
+-- confirmado pelo time de People & Talent em 10/11/2026.
 -- ---------------------------------------------------------------------
 carreira_depara AS (
   SELECT * FROM UNNEST([
     STRUCT('Analytics Engineer' AS career_description, 'Analytics Engineering' AS chapter),
     STRUCT('Data Engineering',  'Data Engineering'),
     STRUCT('Data Science',      'Data Science'),
-    STRUCT('Consulting',        'Data Consultant')   -- CONFIRMAR
+    STRUCT('Consulting',        'Data Consultant')   -- confirmado 10/11/2026
   ])
 ),
 
 -- ---------------------------------------------------------------------
 -- De-para de nível. O Artefactory tem 16 níveis; o Greenhouse só permite
--- deduzir 3 do job_name (Estagiário / Pleno / Senior). Então a demanda
+-- deduzir 3 do job_name (Estagiário / Entry / Senior). Então a demanda
 -- precisa ser dobrada para esses 3.
 --
 -- Manager, Director, Associate Director e Partner ficam de FORA: são 45
@@ -60,18 +60,18 @@ carreira_depara AS (
 -- executive search). Sem essa exclusão, o farol mandaria "acelerar" num
 -- pipe que nunca vai preencher essas vagas.
 --
--- CONFIRMAR com RH: 'Entry 1/2/3' e 'Associate 2/3' são o mesmo nível de
--- contratação que o Greenhouse chama de Pleno (vaga sem marcador no
--- nome)? É a segunda maior incerteza.
+-- 'Entry 1/2/3' e 'Associate 2/3' são o nível Entry do Greenhouse (vaga
+-- sem marcador de nível no nome): confirmado pelo time de People & Talent
+-- em 10/11/2026. O app chamava esse nível de "Pleno"; agora é "Entry".
 -- ---------------------------------------------------------------------
 nivel_depara AS (
   SELECT * FROM UNNEST([
     STRUCT('Intern'      AS level_description, 'Estagiário' AS senioridade),
-    STRUCT('Entry 1',     'Pleno'),     -- CONFIRMAR
-    STRUCT('Entry 2',     'Pleno'),     -- CONFIRMAR
-    STRUCT('Entry 3',     'Pleno'),     -- CONFIRMAR
-    STRUCT('Associate 2', 'Pleno'),     -- CONFIRMAR
-    STRUCT('Associate 3', 'Pleno'),     -- CONFIRMAR
+    STRUCT('Entry 1',     'Entry'),
+    STRUCT('Entry 2',     'Entry'),
+    STRUCT('Entry 3',     'Entry'),
+    STRUCT('Associate 2', 'Entry'),
+    STRUCT('Associate 3', 'Entry'),
     STRUCT('Senior 1',    'Senior'),
     STRUCT('Senior 2',    'Senior'),
     STRUCT('Senior 3',    'Senior')
