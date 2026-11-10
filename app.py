@@ -1590,30 +1590,52 @@ with tab_pipe:
         color = GREEN if diff >= 0 else RED
         return f'<div class="exec-kpi-delta" style="color:{color}">{arrow} {abs(diff):.0f}pp vs. {MES_LABELS[mes_ref]}</div>'
 
+    def _n(valor) -> str:
+        """Inteiro no formato brasileiro: 57312 -> 57.312."""
+        return f"{int(round(valor)):,}".replace(",", ".")
+
+    n_candidaturas = taxas_df["candidaturas"].sum()
+    n_contratados = taxas_df["contratados"].sum()
+    n_decididas = n_contratados + taxas_df["recusas_oferta"].sum()
+    su_mes = su_ofertas_df[su_ofertas_df["mes"] == MES_SNAPSHOT] if not su_ofertas_df.empty else su_ofertas_df
+    n_su = su_mes["candidaturas_sys"].sum() if not su_mes.empty else 0
+    n_su_aceites = su_mes["aceites_sys"].sum() if not su_mes.empty else 0
+
+    if conversao_total is not None and n_contratados:
+        valor_conversao = f"1 a cada {_n(n_candidaturas / n_contratados)}"
+        nota_conversao = (
+            f"{_n(n_contratados)} contratações de {_n(n_candidaturas)} candidaturas "
+            f"({conversao_total:.2f}%), todo o histórico, todos os chapters."
+        )
+    else:
+        valor_conversao, nota_conversao = "—", "Sem contratações registradas."
+
     pipe_kpi_cards = [
         (
-            "Conversão total do pipe",
-            f"{conversao_total:.1f}%" if conversao_total is not None else "—",
-            _delta_pipe(conversao_total, conversao_ant, mes_ant2),
-            "Contratações / total de candidaturas recebidas, somando todos os chapters.",
+            "Candidaturas que viram contratação",
+            valor_conversao,
+            "",
+            nota_conversao,
         ),
         (
-            "Taxa de aceite de oferta (Geral)",
+            "Aceite na etapa Oferta",
             f"{aceite_geral_mes:.0f}%" if aceite_geral_mes is not None else "—",
             _delta_pipe(aceite_geral_mes, aceite_geral_ant, mes_ant2),
-            "Contratados / (contratados + reprovados na etapa Oferta), somando todos os chapters.",
+            f"{_n(n_contratados)} contratados de {_n(n_decididas)} pessoas que já tiveram "
+            "a oferta decidida (contratadas + reprovadas na Oferta). Quem ainda está em Oferta fica fora.",
         ),
         (
-            "Conversão do See You Soon",
+            "Banco See You Soon que vira contratação",
             f"{aceite_sys_mes:.0f}%" if aceite_sys_mes is not None else "—",
             _delta_pipe(aceite_sys_mes, aceite_sys_ant, mes_ant2),
-            "Pessoas que aceitaram oferta / pessoas que passaram pelo banco See You Soon.",
+            f"{_n(n_su_aceites)} de {_n(n_su)} pessoas que passaram pelo banco aceitaram uma oferta.",
         ),
         (
-            "See You Soon — tempo médio no banco",
+            "Espera média no banco See You Soon",
             f"{su_tempo_banco:.0f} dias" if su_tempo_banco is not None else "—",
             "",
-            "Média de dias que os candidatos hoje \"aguardando\" já estão no banco (foto atual do estoque).",
+            "Média entre as pessoas hoje aguardando no banco. O Greenhouse só informa o tempo "
+            "médio por vaga, então cada pessoa recebe o valor da sua vaga.",
         ),
     ]
     st.markdown(
@@ -1692,7 +1714,7 @@ with tab_pipe:
         chart_hint("Clique em uma barra para comparar essa etapa entre todos os chapters.")
         aceite_chapter = taxa_aceite_oferta(mes_sel2, chapter_sel2)
         if aceite_chapter is not None:
-            st.caption(f"🔑 Taxa de aceite de oferta em **{chapter_sel2}** neste mês: **{aceite_chapter:.0f}%**")
+            st.caption(f"🔑 Aceite na etapa Oferta em **{chapter_sel2}**: **{aceite_chapter:.0f}%**")
 
         etapa_click_conv = _clicked_category(conv_event)
         guard_conv = f"{mes_sel2}|{etapa_click_conv}"
@@ -1706,7 +1728,7 @@ with tab_pipe:
 
     col_ag, col_as = st.columns(2)
     with col_ag:
-        st.markdown("##### Taxa de aceite de oferta por carreira (Geral)")
+        st.markdown("##### Aceite na etapa Oferta por carreira")
         st.caption(
             "Contratados / (contratados + reprovados na etapa Oferta), por chapter, no histórico do Greenhouse. "
             "A recusa sai da etapa porque o Greenhouse não registra oferta recusada."
@@ -1731,7 +1753,7 @@ with tab_pipe:
         st.plotly_chart(fig_aceite_geral, use_container_width=True)
 
     with col_as:
-        st.markdown("##### Conversão do See You Soon por carreira")
+        st.markdown("##### Banco See You Soon que vira contratação, por carreira")
         st.caption(
             "% das pessoas que passaram pelo banco See You Soon e aceitaram oferta, por chapter. "
             "Não é taxa de aceite: o Greenhouse não registra oferta recusada do banco."
