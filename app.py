@@ -359,6 +359,7 @@ st.markdown(
         }}
         .farol-card .kpis {{ font-size: 12px; color: {PAL['muted']}; margin-top: 10px; line-height: 1.7; font-family: 'Roboto Mono', monospace; }}
         .farol-card .kpis b {{ color: {PAL['ink']}; }}
+        .farol-card .aviso {{ font-size: 11.5px; font-weight: 700; margin-top: 8px; min-height: 18px; line-height: 1.5; }}
 
         /* ---- kpis executivos: cards de metrica agregada (aba Visao Gerencial) ---- */
         .exec-kpi-row {{ display: flex; gap: 14px; flex-wrap: wrap; margin: 4px 0 22px; }}
@@ -848,12 +849,20 @@ def pipe_trend(chapter: str, etapa: str, col: str = "tempo_medio_dias") -> list:
     return hist[col].tolist()
 
 
-def gap_texto(gap_pct, demanda: float, oferta: float) -> str:
-    """Gap para exibir: em % quando existe, senão em pessoas (demanda
-    líquida <= 0 não tem percentual — ver farol_status)."""
-    if gap_pct is not None and pd.notna(gap_pct):
-        return f"{gap_pct:+.0f}%"
-    return f"{demanda - oferta:+.1f} pessoas"
+def gap_texto(gap_pct, demanda: float, oferta: float, curto: bool = False) -> str:
+    """Gap para exibir, em pessoas, com o % como complemento. O % só aparece
+    com demanda de pelo menos 1 pessoa: sobre 0,5 FTE ele vira -720% e
+    parece mais grave do que um gap de 11 pessoas. `curto` é para rótulo
+    de gráfico, onde não cabe a frase inteira."""
+    falta = demanda - oferta
+    if abs(falta) < 0.05:
+        return "equilibrado"
+    if curto:
+        return f"falta {falta:.1f}" if falta > 0 else f"sobra {-falta:.1f}"
+    texto = f"faltam {falta:.1f} pessoas" if falta > 0 else f"sobram {-falta:.1f} pessoas"
+    if gap_pct is not None and pd.notna(gap_pct) and demanda >= 1:
+        texto += f" ({gap_pct:+.0f}%)"
+    return texto
 
 
 def farol_insight(status: str, gap_pct, demanda: float, oferta: float) -> str:
@@ -1340,6 +1349,16 @@ with tab_farol:
     stat = agg.apply(lambda r: farol_status(r["demanda"], r["oferta"]), axis=1, result_type="expand")
     agg["status"], agg["gap_pct"] = stat[0], stat[1]
 
+    # Senioridade que pede acelerar ou pausar ao contrário do card do
+    # chapter. A soma por chapter esconde isso: Data Engineering pode estar
+    # em "pausar" no total e ainda precisar contratar Seniors.
+    _status_ch = agg.set_index("chapter")["status"]
+    divergentes = [
+        (r["chapter"], r["senioridade"], r["farol_status"])
+        for _, r in df_mes.sort_values(["chapter", "senioridade"]).iterrows()
+        if r["farol_status"] in ("acelerar", "pausar") and r["farol_status"] != _status_ch.get(r["chapter"])
+    ]
+
     n_acelerar = int((agg["status"] == "acelerar").sum())
     n_pausar = int((agg["status"] == "pausar").sum())
     mes_label_sel = MES_LABELS[mes_sel]
@@ -1348,18 +1367,26 @@ with tab_farol:
     else:
         partes = []
         if n_acelerar:
-            top_acel = agg[agg["status"] == "acelerar"].sort_values("gap_pct", ascending=False).iloc[0]
+            # destaque e "mais crítico" pelo gap em PESSOAS, não pelo %: o %
+            # explode em demanda pequena e não existe com demanda <= 0
+            acelerados = agg[agg["status"] == "acelerar"]
+            top_acel = acelerados.loc[(acelerados["demanda"] - acelerados["oferta"]).idxmax()]
             partes.append(
-                f"<b>{n_acelerar} chapter(s) em 🟢 acelerar</b> — destaque para <b>{top_acel['chapter']}</b> (gap {gap_texto(top_acel['gap_pct'], top_acel['demanda'], top_acel['oferta'])})"
+                f"<b>{n_acelerar} chapter(s) em 🟢 acelerar</b> — destaque para <b>{top_acel['chapter']}</b> ({gap_texto(top_acel['gap_pct'], top_acel['demanda'], top_acel['oferta'])})"
             )
         if n_pausar:
-            # pelo gap em pessoas: o % não existe quando a demanda líquida é <= 0
             pausados = agg[agg["status"] == "pausar"]
             top_pausa = pausados.loc[(pausados["demanda"] - pausados["oferta"]).idxmin()]
             partes.append(
-                f"<b>{n_pausar} chapter(s) em 🔴 pausar</b> — o mais crítico é <b>{top_pausa['chapter']}</b> (gap {gap_texto(top_pausa['gap_pct'], top_pausa['demanda'], top_pausa['oferta'])})"
+                f"<b>{n_pausar} chapter(s) em 🔴 pausar</b> — o mais crítico é <b>{top_pausa['chapter']}</b> ({gap_texto(top_pausa['gap_pct'], top_pausa['demanda'], top_pausa['oferta'])})"
             )
         finding_txt = f"Em <b>{mes_label_sel}</b>: " + " · ".join(partes) + "."
+    if divergentes:
+        finding_txt += (
+            " <b>Atenção:</b> dentro de chapters com outro status, "
+            + ", ".join(f"<b>{ch} {sen}</b> pede {STATUS_LABEL[st_].lower()}" for ch, sen, st_ in divergentes)
+            + " — veja o detalhe por senioridade antes de decidir."
+        )
     render_finding(finding_txt)
 
     st.markdown("### Farol por chapter")
@@ -1378,6 +1405,13 @@ with tab_farol:
             bg = STATUS_BG[row["status"]]
             gap_txt = gap_texto(row["gap_pct"], row["demanda"], row["oferta"])
             tip = _html_attr(farol_insight(row["status"], row["gap_pct"], row["demanda"], row["oferta"]))
+            # sempre renderiza o bloco (vazio quando não há aviso) para os
+            # cards ficarem com a mesma altura
+            aviso = "<br>".join(
+                f'<span style="color:{STATUS_COLOR[st_]}">⚠ {sen}: {STATUS_LABEL[st_].lower()}</span>'
+                for ch, sen, st_ in divergentes
+                if ch == row["chapter"]
+            )
             st.markdown(
                 f"""
                 <div class="farol-card" data-tip="{tip}">
@@ -1386,9 +1420,10 @@ with tab_farol:
                     <div class="badge" style="color:{color}; background:{bg}">{STATUS_LABEL[row['status']]}</div>
                     <div class="kpis">
                         Gap: <b>{gap_txt}</b><br>
-                        Demanda: <b>{row['demanda']:.0f}</b> · Oferta: <b>{row['oferta']:.1f}</b><br>
+                        Demanda: <b>{row['demanda']:.1f}</b> · Oferta: <b>{row['oferta']:.1f}</b><br>
                         Pipe qualificado: <b>{pipe_qualificado(mes_sel, row['chapter'])}</b>
                     </div>
+                    <div class="aviso">{aviso}</div>
                 </div>
                 """,
                 unsafe_allow_html=True,
@@ -1468,7 +1503,7 @@ with tab_farol:
             fig.add_annotation(
                 x=max(r["oferta_ajustada"], r["demanda_liquida"]),
                 y=r["senioridade"],
-                text=gap_texto(r["gap_pct"], r["demanda_liquida"], r["oferta_ajustada"]),
+                text=gap_texto(r["gap_pct"], r["demanda_liquida"], r["oferta_ajustada"], curto=True),
                 showarrow=False,
                 xanchor="left",
                 xshift=12,
