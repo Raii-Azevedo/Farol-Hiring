@@ -654,6 +654,8 @@ def load_data():
     base["flag_recusa_oferta"] = (
         base["application_status"].str.lower().eq("rejected") & base["etapa"].eq("Oferta")
     ).astype(int)
+    # dias no pipe só de quem foi contratado: é o tempo real de contratação
+    base["dias_contratacao"] = base["total_days_in_pipe"].where(base["flag_contratado"].eq(1))
     taxas = (
         base[base["chapter"].notna()]
         .groupby("chapter", as_index=False)
@@ -661,6 +663,8 @@ def load_data():
             candidaturas=("application_id", "count"),
             contratados=("flag_contratado", "sum"),
             recusas_oferta=("flag_recusa_oferta", "sum"),
+            dias_contratacao=("dias_contratacao", "sum"),
+            contratados_com_dias=("dias_contratacao", "count"),
         )
     )
 
@@ -921,12 +925,14 @@ def taxa_aceite_oferta(mes: str, chapter: str | None = None) -> float | None:
 
 
 def tempo_medio_contratacao(mes: str) -> float | None:
-    """Soma do tempo médio (dias) de cada etapa do funil, com a média entre
-    chapters em cada etapa — leitura ponta a ponta de currículo até contratação."""
-    df = pipe_df[(pipe_df["mes"] == MES_SNAPSHOT) & (pipe_df["tempo_medio_dias"].notna())]
-    if df.empty:
+    """Média de dias no pipe de quem foi contratado, somando todos os
+    chapters. Não soma o tempo médio de cada etapa: essas médias incluem
+    quem ficou parado e foi reprovado, e somadas davam ~410 dias, contra
+    ~260 dos contratados de verdade."""
+    n = taxas_df["contratados_com_dias"].sum()
+    if not n:
         return None
-    return df.groupby("etapa")["tempo_medio_dias"].mean().sum()
+    return taxas_df["dias_contratacao"].sum() / n
 
 
 def mes_anterior(mes: str) -> str | None:
@@ -1273,7 +1279,7 @@ with tab_exec:
             "Tempo médio de contratação",
             f"{tempo_total:.0f} dias" if tempo_total is not None else "—",
             _delta_html(tempo_total, tempo_ant, False, "{:.0f}", " dias"),
-            "Soma do tempo médio de cada etapa do funil, do envio do currículo até a contratação.",
+            "Média de dias no pipe das pessoas contratadas (Greenhouse), somando todos os chapters.",
         ),
         (
             "Taxa de aceite de oferta",
