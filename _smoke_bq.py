@@ -222,6 +222,11 @@ plotly_pkg.graph_objects, plotly_pkg.express = go_stub, px_stub
 sys.modules.update({"plotly": plotly_pkg, "plotly.graph_objects": go_stub, "plotly.express": px_stub})
 
 sys.modules["streamlit"] = Stub("streamlit")
+_comp = types.ModuleType("streamlit.components")
+_comp_v1 = types.ModuleType("streamlit.components.v1")
+_comp_v1.html = lambda *a, **kw: None
+_comp.v1 = _comp_v1
+sys.modules.update({"streamlit.components": _comp, "streamlit.components.v1": _comp_v1})
 
 # auth.py NÃO é stubado: ele é parte do que precisa ser testado agora que a
 # allowlist saiu do CSV e virou uma query no BigQuery.

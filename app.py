@@ -17,6 +17,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import plotly.express as px
 import streamlit as st
+import streamlit.components.v1 as components
 from PIL import Image
 
 import auth
@@ -445,6 +446,11 @@ st.markdown(
         /* ---- kpis executivos: cards de metrica agregada (aba Visao Gerencial) ---- */
         .exec-kpi-row {{ display: flex; gap: 14px; flex-wrap: wrap; margin: 4px 0 22px; }}
         .exec-kpi-scope {{ font-size: 12.5px; color: {PAL['muted']}; margin: 6px 0 2px; }}
+        .pipe-sec {{
+            display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin: 34px 0 6px;
+            padding-top: 16px; border-top: 1px solid {PAL['line']};
+        }}
+        .pipe-sec span {{ font-size: 12px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; color: {PINK}; }}
         /* ---- aba Como ler ---- */
         .cl-hero {{
             background: linear-gradient(120deg, {MEDIUM_BLUE} 0%, #2B2F7A 55%, {PINK} 140%);
@@ -1489,6 +1495,30 @@ CHART_LAYOUT = dict(
     yaxis=dict(gridcolor=PAL["line"], zerolinecolor=PAL["line"]),
 )
 
+# Mês da demanda compartilhado: a Visão Gerencial e o Farol têm cada uma o
+# seu seletor (Streamlit não deixa o mesmo widget em duas abas), mas trocar
+# um troca o outro, para os números das duas abas sempre baterem.
+_MES_KEYS = ("mes_exec", "mes_farol")
+for _k in _MES_KEYS:
+    if st.session_state.get(_k) not in MESES:
+        st.session_state[_k] = st.session_state.get("mes_ref", MESES[IDX_MES_PADRAO])
+
+
+def _sincroniza_mes(origem: str) -> None:
+    st.session_state["mes_ref"] = st.session_state[origem]
+    for k in _MES_KEYS:
+        st.session_state[k] = st.session_state[origem]
+
+
+def _ir_para_pipe(chapter: str, senioridade: str) -> None:
+    """Clique numa célula do farol: leva o recorte para os filtros da Visão
+    do Pipe e para o detalhe por senioridade do próprio Farol."""
+    st.session_state["chapter_pipe"] = chapter
+    st.session_state["senioridade_pipe"] = senioridade
+    st.session_state["chapter_sel"] = chapter
+    st.session_state["_ir_pipe"] = f"{chapter} · {senioridade}"
+
+
 tab_exec, tab_farol, tab_pipe, tab_ajuda = st.tabs(
     ["Visão Gerencial", "Farol Executivo", "Visão do Pipe", "Como ler"]
 )
@@ -1505,7 +1535,8 @@ with tab_exec:
     )
 
     mes_sel0 = st.selectbox(
-        "Mês da demanda", MESES, index=IDX_MES_PADRAO, format_func=lambda m: MES_LABELS[m], key="mes_exec"
+        "Mês da demanda", MESES, format_func=lambda m: MES_LABELS[m], key="mes_exec",
+        on_change=_sincroniza_mes, args=("mes_exec",),
     )
     st.caption(f"📷 Pipe: foto de **{DATA_SNAPSHOT}**. Ele não muda com o mês, só a demanda muda.")
     mes_ant0 = mes_anterior(mes_sel0)
@@ -1606,9 +1637,13 @@ with tab_farol:
     )
 
     mes_sel = st.selectbox(
-        "Mês da demanda", MESES, index=IDX_MES_PADRAO, format_func=lambda m: MES_LABELS[m], key="mes_farol"
+        "Mês da demanda", MESES, format_func=lambda m: MES_LABELS[m], key="mes_farol",
+        on_change=_sincroniza_mes, args=("mes_farol",),
     )
-    st.caption(f"📷 Pipe: foto de **{DATA_SNAPSHOT}**. Ele não muda com o mês, só a demanda muda.")
+    st.caption(
+        f"📷 Pipe: foto de **{DATA_SNAPSHOT}**. Ele não muda com o mês, só a demanda muda. "
+        "O mês é o mesmo da Visão Gerencial: trocar aqui troca lá."
+    )
 
     df_mes = farol_df[farol_df["mes"] == mes_sel]
     mes_label_sel = MES_LABELS[mes_sel]
@@ -1650,7 +1685,8 @@ with tab_farol:
     st.caption(
         "Cada célula é uma decisão: 🟢 acelerar = abrir vagas · 🟡 manter · 🔴 pausar = oferta acima da demanda. "
         f"A decisão de contratação olha {' e '.join(SENIORIDADES_FAROL)}; Estagiário aparece apagado, só para "
-        "acompanhamento, porque segue o ritmo das turmas de estágio. Passe o mouse numa célula para o motivo."
+        "acompanhamento, porque segue o ritmo das turmas de estágio. Passe o mouse numa célula para o motivo; "
+        "**Ver no pipe ↗** abre a Visão do Pipe já filtrada naquela carreira e senioridade."
     )
 
     # Grid de divs, não <table>: o Streamlit aplica o estilo dele em
@@ -1686,35 +1722,64 @@ with tab_farol:
             f'<div class="fm-num">{nums}</div>{origem}</div>'
         )
 
-    n_cols = len(sens_matriz)
-    cab = '<div class="fm-th"></div>' + "".join(
-        f'<div class="fm-th{" fm-th-apagada" if s == "Estagiário" else ""}">{s}'
-        f'{"<span>acompanhamento</span>" if s == "Estagiário" else ""}</div>'
-        for s in sens_matriz
-    ) + '<div class="fm-th">Total do chapter<span>sem status</span></div>'
-    linhas = []
+    # Matriz em colunas do Streamlit (e não um único bloco HTML) para cada
+    # célula ter um botão: clicar leva o recorte para a Visão do Pipe e para
+    # o detalhe abaixo. É a ponte do "onde contratar" para o "por que trava".
+    larguras = [1.1] + [1] * len(sens_matriz) + [0.95]
+    cab = st.columns(larguras, vertical_alignment="bottom")
+    for col, s in zip(cab[1:-1], sens_matriz):
+        col.markdown(
+            f'<div class="fm-th{" fm-th-apagada" if s == "Estagiário" else ""}">{s}'
+            f'{"<span>acompanhamento</span>" if s == "Estagiário" else ""}</div>',
+            unsafe_allow_html=True,
+        )
+    cab[-1].markdown('<div class="fm-th">Total do chapter<span>sem status</span></div>', unsafe_allow_html=True)
+
     for ch in chapters_farol:
         do_ch = df_mes[df_mes["chapter"] == ch].set_index("senioridade")
-        celulas = "".join(
-            _celula(do_ch.loc[s] if s in do_ch.index else None, apagada=(s == "Estagiário"))
-            for s in sens_matriz
-        )
-        total = (
+        linha = st.columns(larguras, vertical_alignment="center")
+        linha[0].markdown(f'<div class="fm-chapter">{ch}</div>', unsafe_allow_html=True)
+        for col, s in zip(linha[1:-1], sens_matriz):
+            r = do_ch.loc[s] if s in do_ch.index else None
+            with col:
+                st.markdown(_celula(r, apagada=(s == "Estagiário")), unsafe_allow_html=True)
+                if r is not None:
+                    st.button(
+                        "Ver no pipe ↗", key=f"pipe_{ch}_{s}", type="tertiary",
+                        on_click=_ir_para_pipe, args=(ch, s),
+                        help=f"Abre a Visão do Pipe filtrada em {ch} · {s}",
+                    )
+        linha[-1].markdown(
             f'<div class="fm-total">'
             f'<div><span>Pedido dos projetos</span><b>{do_ch["demanda_bruta_fte"].sum():.1f}</b></div>'
             f'<div><span>− Desalocados</span><b>{do_ch["desalocado_fte"].sum():.1f}</b></div>'
             f'<div class="fm-total-liq"><span>Demanda líquida</span><b>{do_ch["demanda_liquida"].sum():.1f}</b></div>'
             f'<div><span>Oferta</span><b>{do_ch["oferta_ajustada"].sum():.1f}</b></div>'
-            f'<div><span>Pipe qualificado</span><b>{pipe_qualificado(mes_sel, ch)}</b></div></div>'
+            f'<div><span>Pipe qualificado</span><b>{pipe_qualificado(mes_sel, ch)}</b></div></div>',
+            unsafe_allow_html=True,
         )
-        linhas.append(f'<div class="fm-chapter">{ch}</div>{celulas}{total}')
-    st.markdown(
-        f'<div class="fm-wrap"><div class="fm-grid" style="--fm-n:{n_cols}">'
-        + cab
-        + "".join(linhas)
-        + "</div></div>",
-        unsafe_allow_html=True,
-    )
+
+    # depois do clique: troca para a aba Visão do Pipe. O Streamlit não tem
+    # API para trocar de aba, então um script clica no botão da aba.
+    destino = st.session_state.pop("_ir_pipe", None)
+    if destino:
+        st.toast(f"Visão do Pipe filtrada em {destino}.", icon="📈")
+        # o destino entra no script para cada clique gerar um iframe novo
+        components.html(
+            f"""<script>
+            // {destino}
+            const doc = window.parent.document;
+            const alvo = [...doc.querySelectorAll('[role="tab"]')]
+                .find(t => t.innerText.includes('Visão do Pipe'));
+            if (alvo) {{
+                alvo.click();
+                doc.querySelectorAll('[data-testid="stMain"], [data-testid="stAppViewContainer"], section.main')
+                    .forEach(el => el.scrollTo({{top: 0}}));
+                window.parent.scrollTo({{top: 0}});
+            }}
+            </script>""",
+            height=0,
+        )
     st.caption(
         "A demanda de cada célula já é líquida: o que os projetos pedem menos as pessoas que saem de projeto "
         "no mês e podem ser realocadas (as duas do Artefactory). Só o que sobra precisa de contratação. "
@@ -1971,6 +2036,67 @@ with tab_pipe:
         texto_sla = "Nenhuma etapa em SLA crítico"
     render_finding(f"{rotulo_recorte[0].upper()}{rotulo_recorte[1:]}: {texto_sla}.")
 
+    st.markdown('<div class="pipe-sec"><span>1 · Onde trava</span>etapas acima da meta</div>', unsafe_allow_html=True)
+    st.markdown("##### Gargalos e SLA")
+    st.caption(
+        f"Tempo médio de cada etapa contra a meta, por chapter, no recorte escolhido ({rotulo_recorte}). "
+        "Na ordem do funil, chapter por chapter; o pior gargalo aparece destacado abaixo da tabela."
+    )
+
+    status_counts = sla_calc["status_sla"].value_counts()
+    resumo_status = [
+        ("🔴 Crítico", int(status_counts.get("critico", 0)), RED),
+        ("🟡 Atenção", int(status_counts.get("atencao", 0)), AMBER),
+        ("🟢 OK", int(status_counts.get("ok", 0)), GREEN),
+    ]
+    st.markdown(
+        '<div class="exec-kpi-row" style="margin-bottom:10px;">'
+        + "".join(
+            f'<div class="exec-kpi-card" style="text-align:center;">'
+            f'<div class="exec-kpi-label" style="color:{color}">{label}</div>'
+            f'<div class="exec-kpi-value" style="color:{color}">{count}</div>'
+            f'<div class="exec-kpi-note">combinações chapter × etapa no recorte</div></div>'
+            for label, count, color in resumo_status
+        )
+        + "</div>",
+        unsafe_allow_html=True,
+    )
+
+    sla_df = dfp_mes.dropna(subset=["excesso_dias"]).copy()
+    # ordem do funil, não do excesso: lida etapa a etapa, a tabela mostra
+    # onde o processo trava; o pior caso vai para o alerta logo abaixo
+    pior_sla = sla_df.sort_values("excesso_dias", ascending=False).head(1)
+    sla_df = sla_df.sort_values(["chapter", "ordem_etapa"])[
+        ["chapter", "etapa", "tempo_medio_dias", "meta_sla_dias", "excesso_dias", "status_sla"]
+    ]
+    sla_df.columns = ["Chapter", "Etapa", "Tempo médio (dias)", "Meta (dias)", "Excesso (dias)", "Status"]
+
+    STATUS_SLA_LABEL = {"critico": "🔴 CRÍTICO", "atencao": "🟡 ATENÇÃO", "ok": "🟢 OK"}
+    sla_df["Tempo médio (dias)"] = sla_df["Tempo médio (dias)"].map(lambda v: f"{v:.1f}")
+    sla_df["Meta (dias)"] = sla_df["Meta (dias)"].map(lambda v: f"{v:.0f}")
+    sla_df["Excesso (dias)"] = sla_df["Excesso (dias)"].map(lambda v: f"{v:+.1f}")
+    sla_df["Status"] = sla_df["Status"].map(STATUS_SLA_LABEL).fillna(sla_df["Status"])
+
+    render_table(
+        sla_df,
+        numeric_cols={"Tempo médio (dias)", "Meta (dias)", "Excesso (dias)"},
+        help_map={
+            "Tempo médio (dias)": "Tempo médio corrido que um candidato permanece nesta etapa (média do Greenhouse por vaga).",
+            "Meta (dias)": "SLA alvo definido para esta etapa.",
+            "Excesso (dias)": "Tempo médio − meta. Negativo significa que a etapa está dentro do prazo.",
+            "Status": "🔴 Crítico: excesso > 5 dias · 🟡 Atenção: até 5 dias de excesso · 🟢 OK: dentro da meta.",
+        },
+    )
+
+    top_gargalo = pior_sla.iloc[0] if not pior_sla.empty else None
+    if top_gargalo is not None and top_gargalo["status_sla"] == "critico":
+        render_note(
+            f"🔴 <b>Pior gargalo:</b> {top_gargalo['etapa']} em {top_gargalo['chapter']}: "
+            f"{top_gargalo['tempo_medio_dias']:.1f} dias vs. meta de {top_gargalo['meta_sla_dias']:.0f} dias.",
+            variant="critical",
+        )
+
+    st.markdown('<div class="pipe-sec"><span>2 · Por que trava</span>conversão e tempo em cada etapa</div>', unsafe_allow_html=True)
     col_a, col_b = st.columns(2)
     with col_a:
         st.markdown("##### Funil de volume a partir do Envio do Case")
@@ -2040,67 +2166,55 @@ with tab_pipe:
             st.session_state["_last_conv_click"] = guard_conv
             show_conv_drilldown(etapa_click_conv, mes_sel2, sen_sel2)
 
-    def _cores_destaque(chapters, cor):
-        """Destaca o chapter do filtro; os outros ficam apagados."""
-        if chapter_sel2 == TODOS:
-            return cor
-        return [cor if ch == chapter_sel2 else PAL["line"] for ch in chapters]
-
-    rotulo_sen = "todas as senioridades" if sen_sel2 == TODOS else sen_sel2
-    col_ag, col_as = st.columns(2)
-    with col_ag:
-        st.markdown("##### Oferta → contratação, por carreira")
-        st.caption(
-            f"Compara chapters ({rotulo_sen}). "
-            "Contratados / (contratados + reprovados na etapa Oferta), no histórico do Greenhouse."
+    st.markdown("##### Tempo médio por etapa")
+    st.caption(
+        "Dias corridos que um candidato fica em cada etapa, no recorte escolhido (média do Greenhouse por vaga, "
+        "ponderada pelas candidaturas). **Oferta e See You Soon ficam separadas**: a barra rosa é o tempo no "
+        "banco See You Soon e não entra na média da Oferta. Uma Oferta longa pode ser negociação demorada ou "
+        "registro não atualizado no Greenhouse."
+    )
+    tempo_agg = dfp_rec.dropna(subset=["tempo_medio_dias"])[["etapa", "tempo_medio_dias"]].copy()
+    tempo_agg["cor"] = azul_barra
+    if su_tempo_banco is not None:
+        linha_su = pd.DataFrame(
+            [{"etapa": ETAPA_SU, "tempo_medio_dias": round(su_tempo_banco, 1), "cor": PINK}]
         )
-        chapters_aceite = sorted(taxas_df["chapter"].unique())
-        aceite_vals = [taxa_aceite_oferta(mes_sel2, ch, sen_sel2) for ch in chapters_aceite]
-        fig_aceite_geral = go.Figure(
+        tempo_agg = pd.concat([tempo_agg, linha_su], ignore_index=True)
+    if tempo_agg.empty:
+        render_note("Sem dado de tempo médio para este recorte.", variant="neutral")
+    else:
+        fig_tempo_agg = go.Figure(
             go.Bar(
-                x=chapters_aceite,
-                y=[v if v is not None else 0 for v in aceite_vals],
-                marker_color=_cores_destaque(chapters_aceite, azul_barra),
-                text=[f"{v:.0f}%" if v is not None else "—" for v in aceite_vals],
+                x=tempo_agg["etapa"],
+                y=tempo_agg["tempo_medio_dias"],
+                marker_color=list(tempo_agg["cor"]),
+                text=tempo_agg["tempo_medio_dias"].map(lambda v: f"{v:.1f}d"),
                 textposition="outside",
-                hovertemplate="<b>%{x}</b><br>Aceite: <b>%{y:.0f}%</b><extra></extra>",
+                hovertemplate="<b>%{x}</b><br>Tempo médio: <b>%{y:.1f} dias</b><extra></extra>",
             )
         )
-        fig_aceite_geral.update_layout(
-            height=300,
-            yaxis=dict(range=[0, 110], **CHART_LAYOUT["yaxis"]),
-            **{k: v for k, v in CHART_LAYOUT.items() if k != "yaxis"},
+        fig_tempo_agg.update_layout(
+            height=320, yaxis_title="Dias corridos", clickmode="event+select", **CHART_LAYOUT
         )
-        st.plotly_chart(fig_aceite_geral, use_container_width=True)
+        tempo_event = st.plotly_chart(
+            fig_tempo_agg, use_container_width=True, on_select="rerun", selection_mode="points", key="tempo_chart_sel"
+        )
+        chart_hint(
+            "Clique em uma barra azul para ver a quebra por chapter, ou na rosa para ver quem está no banco."
+        )
 
-    with col_as:
-        st.markdown("##### See You Soon → contratação, por carreira")
-        st.caption(
-            f"Compara chapters ({rotulo_sen}). "
-            "% das pessoas que passaram pelo banco e aceitaram oferta."
-        )
-        chapters_sys = sorted(su_ofertas_df["chapter"].unique()) if not su_ofertas_df.empty else []
-        if chapters_sys:
-            aceite_sys_vals = [taxa_aceite_sys(mes_sel2, ch, sen_sel2) for ch in chapters_sys]
-            fig_aceite_sys = go.Figure(
-                go.Bar(
-                    x=chapters_sys,
-                    y=[v if v is not None else 0 for v in aceite_sys_vals],
-                    marker_color=_cores_destaque(chapters_sys, PINK),
-                    text=[f"{v:.0f}%" if v is not None else "—" for v in aceite_sys_vals],
-                    textposition="outside",
-                    hovertemplate="<b>%{x}</b><br>Conversão do banco: <b>%{y:.0f}%</b><extra></extra>",
-                )
-            )
-            fig_aceite_sys.update_layout(
-                height=300,
-                yaxis=dict(range=[0, 110], **CHART_LAYOUT["yaxis"]),
-                **{k: v for k, v in CHART_LAYOUT.items() if k != "yaxis"},
-            )
-            st.plotly_chart(fig_aceite_sys, use_container_width=True)
-        else:
-            render_note("Sem dado do banco See You Soon.", variant="neutral")
+        etapa_click_tempo = _clicked_category(tempo_event, axis="x")
+        guard_tempo = f"{mes_sel2}|{sen_sel2}|{etapa_click_tempo}"
+        if not etapa_click_tempo:
+            st.session_state.pop("_last_tempo_click", None)
+        elif st.session_state.get("_last_tempo_click") != f"{guard_tempo}|{chapter_sel2}":
+            st.session_state["_last_tempo_click"] = f"{guard_tempo}|{chapter_sel2}"
+            if etapa_click_tempo == ETAPA_SU:
+                show_su_drilldown(chapter_sel2, sen_sel2)
+            else:
+                show_tempo_drilldown(etapa_click_tempo, mes_sel2, sen_sel2)
 
+    st.markdown('<div class="pipe-sec"><span>3 · Onde está o volume</span>candidatos vivos por etapa</div>', unsafe_allow_html=True)
     st.markdown("##### Candidatos por etapa × chapter (heatmap)")
     st.caption(
         "Candidatos vivos hoje em cada etapa, do Envio do Case até a Oferta, no recorte escolhido. Células "
@@ -2183,54 +2297,7 @@ with tab_pipe:
         tabela_nivel = pd.DataFrame(table_rows)
         render_table(tabela_nivel, numeric_cols=set(etapa_cols))
 
-    st.markdown("##### Tempo médio por etapa")
-    st.caption(
-        "Dias corridos que um candidato fica em cada etapa, no recorte escolhido (média do Greenhouse por vaga, "
-        "ponderada pelas candidaturas). **Oferta e See You Soon ficam separadas**: a barra rosa é o tempo no "
-        "banco See You Soon e não entra na média da Oferta. Uma Oferta longa pode ser negociação demorada ou "
-        "registro não atualizado no Greenhouse."
-    )
-    tempo_agg = dfp_rec.dropna(subset=["tempo_medio_dias"])[["etapa", "tempo_medio_dias"]].copy()
-    tempo_agg["cor"] = azul_barra
-    if su_tempo_banco is not None:
-        linha_su = pd.DataFrame(
-            [{"etapa": ETAPA_SU, "tempo_medio_dias": round(su_tempo_banco, 1), "cor": PINK}]
-        )
-        tempo_agg = pd.concat([tempo_agg, linha_su], ignore_index=True)
-    if tempo_agg.empty:
-        render_note("Sem dado de tempo médio para este recorte.", variant="neutral")
-    else:
-        fig_tempo_agg = go.Figure(
-            go.Bar(
-                x=tempo_agg["etapa"],
-                y=tempo_agg["tempo_medio_dias"],
-                marker_color=list(tempo_agg["cor"]),
-                text=tempo_agg["tempo_medio_dias"].map(lambda v: f"{v:.1f}d"),
-                textposition="outside",
-                hovertemplate="<b>%{x}</b><br>Tempo médio: <b>%{y:.1f} dias</b><extra></extra>",
-            )
-        )
-        fig_tempo_agg.update_layout(
-            height=320, yaxis_title="Dias corridos", clickmode="event+select", **CHART_LAYOUT
-        )
-        tempo_event = st.plotly_chart(
-            fig_tempo_agg, use_container_width=True, on_select="rerun", selection_mode="points", key="tempo_chart_sel"
-        )
-        chart_hint(
-            "Clique em uma barra azul para ver a quebra por chapter, ou na rosa para ver quem está no banco."
-        )
-
-        etapa_click_tempo = _clicked_category(tempo_event, axis="x")
-        guard_tempo = f"{mes_sel2}|{sen_sel2}|{etapa_click_tempo}"
-        if not etapa_click_tempo:
-            st.session_state.pop("_last_tempo_click", None)
-        elif st.session_state.get("_last_tempo_click") != f"{guard_tempo}|{chapter_sel2}":
-            st.session_state["_last_tempo_click"] = f"{guard_tempo}|{chapter_sel2}"
-            if etapa_click_tempo == ETAPA_SU:
-                show_su_drilldown(chapter_sel2, sen_sel2)
-            else:
-                show_tempo_drilldown(etapa_click_tempo, mes_sel2, sen_sel2)
-
+    st.markdown('<div class="pipe-sec"><span>4 · Quem está travado</span>candidatos acima da meta</div>', unsafe_allow_html=True)
     st.markdown("##### Candidatos parados por etapa")
     st.caption(
         "Candidatos em atenção e crítico em cada etapa do funil, no recorte escolhido. Antes de agir, confira "
@@ -2328,65 +2395,68 @@ with tab_pipe:
             else:
                 show_parados_vagas(_sel["etapa"], _sel["status"], mes_sel2)
 
-    st.divider()
-    st.markdown("##### Gargalos e SLA")
-    st.caption(
-        f"Tempo médio de cada etapa contra a meta, por chapter, no recorte escolhido ({rotulo_recorte}). "
-        "Na ordem do funil, chapter por chapter; o pior gargalo aparece destacado abaixo da tabela."
-    )
+    st.markdown('<div class="pipe-sec"><span>5 · Comparação entre carreiras</span>não segue o filtro de chapter, só o de senioridade</div>', unsafe_allow_html=True)
+    def _cores_destaque(chapters, cor):
+        """Destaca o chapter do filtro; os outros ficam apagados."""
+        if chapter_sel2 == TODOS:
+            return cor
+        return [cor if ch == chapter_sel2 else PAL["line"] for ch in chapters]
 
-    status_counts = sla_calc["status_sla"].value_counts()
-    resumo_status = [
-        ("🔴 Crítico", int(status_counts.get("critico", 0)), RED),
-        ("🟡 Atenção", int(status_counts.get("atencao", 0)), AMBER),
-        ("🟢 OK", int(status_counts.get("ok", 0)), GREEN),
-    ]
-    st.markdown(
-        '<div class="exec-kpi-row" style="margin-bottom:10px;">'
-        + "".join(
-            f'<div class="exec-kpi-card" style="text-align:center;">'
-            f'<div class="exec-kpi-label" style="color:{color}">{label}</div>'
-            f'<div class="exec-kpi-value" style="color:{color}">{count}</div>'
-            f'<div class="exec-kpi-note">combinações chapter × etapa no recorte</div></div>'
-            for label, count, color in resumo_status
+    rotulo_sen = "todas as senioridades" if sen_sel2 == TODOS else sen_sel2
+    col_ag, col_as = st.columns(2)
+    with col_ag:
+        st.markdown("##### Oferta → contratação, por carreira")
+        st.caption(
+            f"Compara chapters ({rotulo_sen}). "
+            "Contratados / (contratados + reprovados na etapa Oferta), no histórico do Greenhouse."
         )
-        + "</div>",
-        unsafe_allow_html=True,
-    )
-
-    sla_df = dfp_mes.dropna(subset=["excesso_dias"]).copy()
-    # ordem do funil, não do excesso: lida etapa a etapa, a tabela mostra
-    # onde o processo trava; o pior caso vai para o alerta logo abaixo
-    pior_sla = sla_df.sort_values("excesso_dias", ascending=False).head(1)
-    sla_df = sla_df.sort_values(["chapter", "ordem_etapa"])[
-        ["chapter", "etapa", "tempo_medio_dias", "meta_sla_dias", "excesso_dias", "status_sla"]
-    ]
-    sla_df.columns = ["Chapter", "Etapa", "Tempo médio (dias)", "Meta (dias)", "Excesso (dias)", "Status"]
-
-    STATUS_SLA_LABEL = {"critico": "🔴 CRÍTICO", "atencao": "🟡 ATENÇÃO", "ok": "🟢 OK"}
-    sla_df["Tempo médio (dias)"] = sla_df["Tempo médio (dias)"].map(lambda v: f"{v:.1f}")
-    sla_df["Meta (dias)"] = sla_df["Meta (dias)"].map(lambda v: f"{v:.0f}")
-    sla_df["Excesso (dias)"] = sla_df["Excesso (dias)"].map(lambda v: f"{v:+.1f}")
-    sla_df["Status"] = sla_df["Status"].map(STATUS_SLA_LABEL).fillna(sla_df["Status"])
-
-    render_table(
-        sla_df,
-        numeric_cols={"Tempo médio (dias)", "Meta (dias)", "Excesso (dias)"},
-        help_map={
-            "Tempo médio (dias)": "Tempo médio corrido que um candidato permanece nesta etapa (média do Greenhouse por vaga).",
-            "Meta (dias)": "SLA alvo definido para esta etapa.",
-            "Excesso (dias)": "Tempo médio − meta. Negativo significa que a etapa está dentro do prazo.",
-            "Status": "🔴 Crítico: excesso > 5 dias · 🟡 Atenção: até 5 dias de excesso · 🟢 OK: dentro da meta.",
-        },
-    )
-
-    top_gargalo = pior_sla.iloc[0] if not pior_sla.empty else None
-    if top_gargalo is not None and top_gargalo["status_sla"] == "critico":
-        render_note(
-            f"🔴 <b>Pior gargalo:</b> {top_gargalo['etapa']} em {top_gargalo['chapter']}: "
-            f"{top_gargalo['tempo_medio_dias']:.1f} dias vs. meta de {top_gargalo['meta_sla_dias']:.0f} dias.",
-            variant="critical",
+        chapters_aceite = sorted(taxas_df["chapter"].unique())
+        aceite_vals = [taxa_aceite_oferta(mes_sel2, ch, sen_sel2) for ch in chapters_aceite]
+        fig_aceite_geral = go.Figure(
+            go.Bar(
+                x=chapters_aceite,
+                y=[v if v is not None else 0 for v in aceite_vals],
+                marker_color=_cores_destaque(chapters_aceite, azul_barra),
+                text=[f"{v:.0f}%" if v is not None else "—" for v in aceite_vals],
+                textposition="outside",
+                hovertemplate="<b>%{x}</b><br>Aceite: <b>%{y:.0f}%</b><extra></extra>",
+            )
         )
+        fig_aceite_geral.update_layout(
+            height=300,
+            yaxis=dict(range=[0, 110], **CHART_LAYOUT["yaxis"]),
+            **{k: v for k, v in CHART_LAYOUT.items() if k != "yaxis"},
+        )
+        st.plotly_chart(fig_aceite_geral, use_container_width=True)
+
+    with col_as:
+        st.markdown("##### See You Soon → contratação, por carreira")
+        st.caption(
+            f"Compara chapters ({rotulo_sen}). "
+            "% das pessoas que passaram pelo banco e aceitaram oferta."
+        )
+        chapters_sys = sorted(su_ofertas_df["chapter"].unique()) if not su_ofertas_df.empty else []
+        if chapters_sys:
+            aceite_sys_vals = [taxa_aceite_sys(mes_sel2, ch, sen_sel2) for ch in chapters_sys]
+            fig_aceite_sys = go.Figure(
+                go.Bar(
+                    x=chapters_sys,
+                    y=[v if v is not None else 0 for v in aceite_sys_vals],
+                    marker_color=_cores_destaque(chapters_sys, PINK),
+                    text=[f"{v:.0f}%" if v is not None else "—" for v in aceite_sys_vals],
+                    textposition="outside",
+                    hovertemplate="<b>%{x}</b><br>Conversão do banco: <b>%{y:.0f}%</b><extra></extra>",
+                )
+            )
+            fig_aceite_sys.update_layout(
+                height=300,
+                yaxis=dict(range=[0, 110], **CHART_LAYOUT["yaxis"]),
+                **{k: v for k, v in CHART_LAYOUT.items() if k != "yaxis"},
+            )
+            st.plotly_chart(fig_aceite_sys, use_container_width=True)
+        else:
+            render_note("Sem dado do banco See You Soon.", variant="neutral")
+
 
 # ---------------------------------------------------------------------------
 # TAB 3 · COMO LER
@@ -2431,11 +2501,14 @@ with tab_ajuda:
     _secao("🗂️", "As abas", "Cada uma responde a uma pergunta.")
     abas = [
         ("🧭", "Visão Gerencial", "Quanto falta contratar no mês e com que velocidade o funil entrega?",
-         "Necessidade líquida, pipe qualificado, tempo médio de contratação e aceite de oferta."),
+         "Necessidade líquida, pipe qualificado, tempo médio de contratação e aceite de oferta. "
+         "O mês escolhido aqui é o mesmo do Farol Executivo."),
         ("🚦", "Farol Executivo", "Devo abrir, manter ou pausar vagas? Em qual carreira e senioridade?",
-         "Matriz carreira × senioridade e o detalhe de demanda × oferta de cada chapter."),
+         "Matriz carreira × senioridade e o detalhe de demanda × oferta de cada chapter. "
+         "<b>Ver no pipe ↗</b> em uma célula leva aquele recorte para a Visão do Pipe."),
         ("📈", "Visão do Pipe", "Onde o processo trava?",
-         "Conversões, funil, tempos, parados e SLA. Os filtros do topo valem para a aba inteira."),
+         "Lida do macro para o micro: onde trava, por que trava, onde está o volume, quem está parado "
+         "e, por último, a comparação entre carreiras. Os filtros do topo valem para a aba inteira."),
     ]
     st.markdown(
         '<div class="cl-abas">'
