@@ -302,7 +302,8 @@ assert "Strategy Consulting Manager" not in set(app.parados_df["vaga"]), "vaga s
 
 # ---- farol: o caso que só aparece com dado real ----
 out = app.farol_df[app.farol_df["mes"] == "2026-10"]
-assert (out["demanda_liquida"] < 0).all()
+# inteiros: -0,3 arredonda para 0, que também é "pausar"
+assert (out["demanda_liquida"] <= 0).all()
 assert set(out["farol_status"]) == {"pausar"}, f"demanda negativa virou {set(out['farol_status'])}"
 print(f"  demanda negativa    : {len(out)} linhas -> todas 'pausar' (não 'acelerar')")
 
@@ -316,9 +317,11 @@ print(f"  oferta ajustada     : {nov['oferta_ajustada'].sum():.1f} (pipe x conve
 # uma senioridade não tem linha de demanda naquele mês
 oferta_mes = app.farol_df.groupby(["chapter", "mes"])["oferta_ajustada"].sum().round(1).unstack()
 assert (oferta_mes.nunique(axis=1) == 1).all(), f"oferta variou entre meses:\n{oferta_mes}"
-falta = app.farol_df[(app.farol_df["mes"] == "2027-01") & (app.farol_df["chapter"] == "Data Science")
-                     & (app.farol_df["senioridade"] == "Estagiário")]
-assert len(falta) == 1 and falta.iloc[0]["demanda_liquida"] == 0, "linha sem demanda deveria valer zero"
+# Estagiário fica fora do farol; tudo em números inteiros
+assert set(app.farol_df["senioridade"]) <= set(app.SENIORIDADES_FAROL), set(app.farol_df["senioridade"])
+for col in ("demanda_bruta_fte", "desalocado_fte", "demanda_liquida", "oferta_ajustada", "gap"):
+    assert app.farol_df[col].dtype.kind == "i", f"{col} não é inteiro"
+assert (app.farol_df["demanda_bruta_fte"] - app.farol_df["desalocado_fte"] == app.farol_df["demanda_liquida"]).all()
 print("  oferta entre meses  : constante, mesmo sem linha de demanda")
 
 # chapters sem demanda não podem aparecer no farol

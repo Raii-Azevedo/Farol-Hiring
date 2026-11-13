@@ -226,10 +226,12 @@ inferir. Os pontos abaixo mudam números do farol:
    Confirmado em 10/11/2026 (o app chamava esse nível de "Pleno"). O
    Artefactory tem 16 níveis e o Greenhouse só permite deduzir 3 do
    `job_name`. Toda a quebra por senioridade depende disso.
-3. **FTE = pessoa?** A demanda vem em FTE fracionário (0,45; 12,68) e o
-   pipe vem em gente. Somar os dois assume 1 FTE = 1 contratação.
+3. **1 FTE = 1 contratação.** A demanda vem em FTE fracionário (0,45; 12,68)
+   e o pipe vem em gente. Confirmado em 13/11/2026: 1 FTE = 1 contratação.
+   O app arredonda Source Request, desalocados e oferta para inteiros
+   (meio para cima) e calcula a demanda líquida a partir deles.
 
-Só o 3 ainda precisa de ratificação.
+Os três pontos estão confirmados.
 
 ## Ainda pendente de confirmação
 

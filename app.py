@@ -11,6 +11,7 @@ que este arquivo)
 """
 
 import base64
+import math
 from pathlib import Path
 
 import pandas as pd
@@ -898,13 +899,23 @@ def load_data():
         oferta, on=["chapter", "senioridade"], how="left"
     )
     farol["demanda_liquida"] = farol["demanda_liquida"].fillna(0.0)
-    # Pedido dos projetos e desalocações ficam visíveis na tela: a demanda
+    # Source Request e desalocações ficam visíveis na tela: a demanda
     # líquida já desconta quem sai de projeto e pode ser realocado, e quem
     # decide precisa ver de onde veio o número antes de abrir vaga.
     for col in ("demanda_bruta_fte", "desalocado_fte"):
         farol[col] = farol[col].fillna(0.0) if col in farol else 0.0
-    farol["oferta_ajustada"] = farol["oferta_ajustada"].fillna(0.0).round(1)
-    farol["gap"] = (farol["demanda_liquida"] - farol["oferta_ajustada"]).round(1)
+    farol["oferta_ajustada"] = farol["oferta_ajustada"].fillna(0.0)
+    # Estagiário fica fora do farol: segue o ritmo das turmas de estágio, não
+    # a demanda dos projetos. Continua na Visão do Pipe.
+    farol = farol[farol["senioridade"].isin(SENIORIDADES_FAROL)].copy()
+    # Números inteiros: não se contrata fração de pessoa (1 FTE = 1
+    # contratação, confirmado). Arredonda meio para cima (2,5 vira 3) e
+    # recalcula a líquida a partir das partes já arredondadas, para a conta
+    # da tela fechar: Source Request - desalocados = demanda líquida.
+    for col in ("demanda_bruta_fte", "desalocado_fte", "oferta_ajustada"):
+        farol[col] = (farol[col] + 0.5).apply(math.floor).astype(int)
+    farol["demanda_liquida"] = farol["demanda_bruta_fte"] - farol["desalocado_fte"]
+    farol["gap"] = farol["demanda_liquida"] - farol["oferta_ajustada"]
     calculado = farol.apply(
         lambda r: farol_status(r["demanda_liquida"], r["oferta_ajustada"]), axis=1
     )
@@ -1031,8 +1042,8 @@ def gap_texto(gap_pct, demanda: float, oferta: float, curto: bool = False) -> st
     if abs(falta) < 0.05:
         return "equilibrado"
     if curto:
-        return f"falta {falta:.1f}" if falta > 0 else f"sobra {-falta:.1f}"
-    texto = f"faltam {falta:.1f} pessoas" if falta > 0 else f"sobram {-falta:.1f} pessoas"
+        return f"falta {falta:.0f}" if falta > 0 else f"sobra {-falta:.0f}"
+    texto = f"faltam {falta:.0f} pessoas" if falta > 0 else f"sobram {-falta:.0f} pessoas"
     if gap_pct is not None and pd.notna(gap_pct) and demanda >= 1:
         texto += f" ({gap_pct:+.0f}%)"
     return texto
@@ -1051,7 +1062,7 @@ def farol_insight(status: str, gap_pct, demanda: float, oferta: float) -> str:
     if status == "manter":
         if abs(demanda - oferta) < GAP_MINIMO_PESSOAS:
             return (
-                f"Diferença de {demanda - oferta:+.1f} pessoa entre demanda e oferta, menos de uma vaga. "
+                f"Demanda e oferta empatadas em {demanda:.0f} pessoas. "
                 "Mantenha o ritmo atual de contratação."
             )
         return (
@@ -1060,7 +1071,7 @@ def farol_insight(status: str, gap_pct, demanda: float, oferta: float) -> str:
         )
     if gap_pct is None:
         return (
-            f"Demanda líquida de {demanda:.1f} pessoas: as desalocações superam os pedidos neste mês. "
+            f"Demanda líquida de {demanda:.0f} pessoas: as desalocações cobrem o Source Request deste mês. "
             "Considere pausar novas aberturas ou redirecionar candidatos para outro chapter."
         )
     return (
@@ -1100,7 +1111,12 @@ def pipe_qualificado(mes: str, chapter: str | None = None) -> int:
     """Quantos candidatos já passaram do currículo e ainda estão vivos no processo
     (Entrevista Fit até Oferta) — o estoque qualificado disponível para cobrir
     a demanda deste mês, sem contar quem ainda está só na triagem de currículo."""
-    df = pipe_df[(pipe_df["mes"] == MES_SNAPSHOT) & (pipe_df["etapa"].isin(QUALIFIED_STAGES))]
+    # mesmo recorte do farol: só Entry e Senior (sem Estagiário)
+    df = pipe_nivel_df[
+        (pipe_nivel_df["mes"] == MES_SNAPSHOT)
+        & pipe_nivel_df["etapa"].isin(QUALIFIED_STAGES)
+        & pipe_nivel_df["senioridade"].isin(SENIORIDADES_FAROL)
+    ]
     if chapter:
         df = df[df["chapter"] == chapter]
     return int(df["candidatos"].sum())
@@ -1529,7 +1545,7 @@ tab_exec, tab_farol, tab_pipe, tab_ajuda = st.tabs(
 with tab_exec:
     st.markdown("## 🧭 Visão Gerencial")
     st.caption(
-        "Resumo executivo do mês: quanto falta contratar, quanto pipe qualificado já existe para "
+        "Resumo executivo do mês: quanto falta contratar, quanto Pipeline Qualificado já existe para "
         "cobrir essa necessidade, e quão rápido e eficiente está o funil. O detalhe por chapter fica "
         "na aba Farol Executivo, e o detalhe por etapa, na Visão do Pipe."
     )
@@ -1574,14 +1590,14 @@ with tab_exec:
             "Necessidade de contratação líquida",
             f"{demanda_total:.0f}",
             _delta_html(demanda_total, demanda_ant, None, "{:.0f}", " pessoas"),
-            f"{pedido_total:.0f} pedidos pelos projetos menos {desalocado_total:.0f} pessoas que saem de "
+            f"Source Request de {pedido_total:.0f} menos {desalocado_total:.0f} pessoas que saem de "
             "projeto e podem ser realocadas (Artefactory), somando todos os chapters.",
         ),
         (
-            "Pipe qualificado atual",
+            "Pipeline Qualificado atual",
             f"{pipe_qual_total:.0f}",
             _delta_html(pipe_qual_total, pipe_qual_ant, True, "{:.0f}", " candidatos"),
-            "Candidatos da Entrevista Fit até a Oferta, somando os chapters com demanda cadastrada: quem já passou da triagem inicial.",
+            "Candidatos Entry e Senior da Entrevista Fit até a Oferta, somando os chapters com demanda cadastrada: quem já passou da triagem e do case.",
         ),
         (
             "Tempo médio de contratação",
@@ -1615,10 +1631,10 @@ with tab_exec:
     n_pausa0 = int((dec0["farol_status"] == "pausar").sum())
     lista_acel0 = ", ".join(f"{r['chapter']} {r['senioridade']}" for _, r in acel0.iterrows())
     render_finding(
-        f"Em <b>{MES_LABELS[mes_sel0]}</b>: os projetos pedem <b>{pedido_total:.0f} pessoas</b>, "
+        f"Em <b>{MES_LABELS[mes_sel0]}</b>: o Source Request é de <b>{pedido_total:.0f} pessoas</b>, "
         f"<b>{desalocado_total:.0f}</b> saem de projeto e podem ser realocadas, e a necessidade líquida "
         f"de contratação fica em <b>{demanda_total:.0f} pessoas</b>, "
-        f"com <b>{pipe_qual_total:.0f} candidatos</b> já qualificados no pipe (a partir da Fit). "
+        f"com <b>{pipe_qual_total:.0f} candidatos</b> no Pipeline Qualificado (da Entrevista Fit em diante). "
         f"Entre {' e '.join(SENIORIDADES_FAROL)}: <b>{len(acel0)} combinação(ões)</b> pedindo para acelerar"
         + (f" ({lista_acel0})" if lista_acel0 else "")
         + f" e <b>{n_pausa0}</b> para pausar. "
@@ -1648,10 +1664,7 @@ with tab_farol:
     df_mes = farol_df[farol_df["mes"] == mes_sel]
     mes_label_sel = MES_LABELS[mes_sel]
     chapters_farol = sorted(df_mes["chapter"].unique())
-    # Entry e Senior primeiro (decisão de contratação); Estagiário por
-    # último e apagado (acompanhamento); qualquer outro nível no fim.
-    sens_extra = sorted(set(df_mes["senioridade"]) - set(SENIORIDADES_FAROL) - {"Estagiário"})
-    sens_matriz = SENIORIDADES_FAROL + sens_extra + (["Estagiário"] if "Estagiário" in set(df_mes["senioridade"]) else [])
+    sens_matriz = SENIORIDADES_FAROL
 
     # O status agora é por chapter × senioridade. O status do chapter
     # inteiro foi removido de propósito: somar as senioridades escondia, por
@@ -1684,14 +1697,14 @@ with tab_farol:
     st.markdown("### Farol por carreira × senioridade")
     st.caption(
         "Cada célula é uma decisão: 🟢 acelerar = abrir vagas · 🟡 manter · 🔴 pausar = oferta acima da demanda. "
-        f"A decisão de contratação olha {' e '.join(SENIORIDADES_FAROL)}; Estagiário aparece apagado, só para "
-        "acompanhamento, porque segue o ritmo das turmas de estágio. Passe o mouse numa célula para o motivo; "
+        f"O farol olha só {' e '.join(SENIORIDADES_FAROL)}: Estagiário segue o ritmo das turmas de estágio e "
+        "fica só na Visão do Pipe. Números inteiros, em pessoas. Passe o mouse numa célula para o motivo; "
         "**Ver no pipe ↗** abre a Visão do Pipe já filtrada naquela carreira e senioridade."
     )
 
     # Grid de divs, não <table>: o Streamlit aplica o estilo dele em
     # tabelas de markdown (bordas retas, fundo) e a matriz ficava "planilha".
-    def _celula(r, apagada: bool) -> str:
+    def _celula(r) -> str:
         if r is None:
             return '<div class="fm-card fm-vazia"><div class="fm-vazia-txt">sem demanda nem pipe</div></div>'
         s = r["farol_status"]
@@ -1700,21 +1713,14 @@ with tab_farol:
         gap = gap_texto(r["gap_pct"], r["demanda_liquida"], r["oferta_ajustada"], curto=True)
         gap = gap[:1].upper() + gap[1:]
         nums = (
-            f'<span>Demanda <b>{r["demanda_liquida"]:.1f}</b></span>'
-            f'<span>Oferta <b>{r["oferta_ajustada"]:.1f}</b></span>'
+            f'<span>Demanda <b>{r["demanda_liquida"]:.0f}</b></span>'
+            f'<span>Oferta <b>{r["oferta_ajustada"]:.0f}</b></span>'
         )
-        # de onde vem a demanda: pedido dos projetos menos quem sai de projeto
+        # de onde vem a demanda: Source Request menos quem sai de projeto.
+        # Sempre presente, mesmo com zero, para todos os cards terem a mesma altura.
         origem = (
-            f'<div class="fm-orig">Pedido {r["demanda_bruta_fte"]:.1f} − desalocados {r["desalocado_fte"]:.1f}</div>'
-            if r["desalocado_fte"] > 0 else ""
+            f'<div class="fm-orig">Source Request {r["demanda_bruta_fte"]:.0f} − desalocados {r["desalocado_fte"]:.0f}</div>'
         )
-        if apagada:
-            return (
-                f'<div class="fm-card fm-apagada" title="{tip}">'
-                f'<div class="fm-mini"><span class="fm-dot" style="background:{cor}"></span>'
-                f'{STATUS_LABEL[s].capitalize()} · {gap}</div>'
-                f'<div class="fm-num">{nums}</div>{origem}</div>'
-            )
         return (
             f'<div class="fm-card" style="--fm-cor:{cor}; --fm-bg:{STATUS_BG[s]}" title="{tip}">'
             f'<span class="fm-pill"><span class="fm-dot" style="background:{cor}"></span>{STATUS_LABEL[s]}</span>'
@@ -1729,20 +1735,19 @@ with tab_farol:
     cab = st.columns(larguras, vertical_alignment="bottom")
     for col, s in zip(cab[1:-1], sens_matriz):
         col.markdown(
-            f'<div class="fm-th{" fm-th-apagada" if s == "Estagiário" else ""}">{s}'
-            f'{"<span>acompanhamento</span>" if s == "Estagiário" else ""}</div>',
+            f'<div class="fm-th">{s}</div>',
             unsafe_allow_html=True,
         )
     cab[-1].markdown('<div class="fm-th">Total do chapter<span>sem status</span></div>', unsafe_allow_html=True)
 
     for ch in chapters_farol:
         do_ch = df_mes[df_mes["chapter"] == ch].set_index("senioridade")
-        linha = st.columns(larguras, vertical_alignment="center")
+        linha = st.columns(larguras, vertical_alignment="top")
         linha[0].markdown(f'<div class="fm-chapter">{ch}</div>', unsafe_allow_html=True)
         for col, s in zip(linha[1:-1], sens_matriz):
             r = do_ch.loc[s] if s in do_ch.index else None
             with col:
-                st.markdown(_celula(r, apagada=(s == "Estagiário")), unsafe_allow_html=True)
+                st.markdown(_celula(r), unsafe_allow_html=True)
                 if r is not None:
                     st.button(
                         "Ver no pipe ↗", key=f"pipe_{ch}_{s}", type="tertiary",
@@ -1751,11 +1756,11 @@ with tab_farol:
                     )
         linha[-1].markdown(
             f'<div class="fm-total">'
-            f'<div><span>Pedido dos projetos</span><b>{do_ch["demanda_bruta_fte"].sum():.1f}</b></div>'
-            f'<div><span>− Desalocados</span><b>{do_ch["desalocado_fte"].sum():.1f}</b></div>'
-            f'<div class="fm-total-liq"><span>Demanda líquida</span><b>{do_ch["demanda_liquida"].sum():.1f}</b></div>'
-            f'<div><span>Oferta</span><b>{do_ch["oferta_ajustada"].sum():.1f}</b></div>'
-            f'<div><span>Pipe qualificado</span><b>{pipe_qualificado(mes_sel, ch)}</b></div></div>',
+            f'<div><span>Source Request</span><b>{do_ch["demanda_bruta_fte"].sum():.0f}</b></div>'
+            f'<div><span>− Desalocados</span><b>{do_ch["desalocado_fte"].sum():.0f}</b></div>'
+            f'<div class="fm-total-liq"><span>Demanda líquida</span><b>{do_ch["demanda_liquida"].sum():.0f}</b></div>'
+            f'<div><span>Oferta</span><b>{do_ch["oferta_ajustada"].sum():.0f}</b></div>'
+            f'<div><span>Pipeline Qualificado</span><b>{pipe_qualificado(mes_sel, ch)}</b></div></div>',
             unsafe_allow_html=True,
         )
 
@@ -1784,8 +1789,8 @@ with tab_farol:
         "A demanda de cada célula já é líquida: o que os projetos pedem menos as pessoas que saem de projeto "
         "no mês e podem ser realocadas (as duas do Artefactory). Só o que sobra precisa de contratação. "
         "\"Total do chapter\" não tem status de propósito: a soma das senioridades pode dizer pausar "
-        "enquanto uma delas precisa de contratação. \"Pipe qualificado\" = candidatos do chapter da "
-        "Entrevista Fit até a Oferta, na foto do pipe."
+        "enquanto uma delas precisa de contratação. \"Pipeline Qualificado\" = candidatos Entry e Senior do "
+        "chapter da Entrevista Fit até a Oferta, na foto do pipe."
     )
 
     st.divider()
@@ -1793,9 +1798,9 @@ with tab_farol:
     chapter_sel = st.selectbox("Chapter para ver o detalhe por senioridade", chapters_farol, key="chapter_sel")
     st.markdown(f"### Demanda × oferta por senioridade em {chapter_sel}")
     st.caption(
-        f"{mes_label_sel}. Para cada senioridade, a barra rosa é a demanda líquida (o pedido dos projetos menos "
+        f"{mes_label_sel}. Para cada senioridade, a barra rosa é a demanda líquida (o Source Request menos "
         "quem sai de projeto e pode ser realocado) e a azul é a oferta ajustada do pipe. À direita, quanto falta "
-        "ou sobra e o farol. Passe o mouse na barra rosa para ver o pedido e os desalocados."
+        "ou sobra e o farol. Passe o mouse na barra rosa para ver o Source Request e os desalocados."
     )
 
     detail = df_mes[df_mes["chapter"] == chapter_sel].copy()
@@ -1809,9 +1814,7 @@ with tab_farol:
         # Barras agrupadas em vez do gráfico de halteres: demanda e oferta
         # lado a lado se leem sem legenda de símbolo, e o veredito fica
         # escrito ao lado, na cor do farol.
-        rotulos_y = [
-            f"{s} (acompanhamento)" if s == "Estagiário" else s for s in detail["senioridade"]
-        ]
+        rotulos_y = list(detail["senioridade"])
         gaps_txt = [
             gap_texto(g, d, o, curto=True)
             for g, d, o in zip(detail["gap_pct"], detail["demanda_liquida"], detail["oferta_ajustada"])
@@ -1826,13 +1829,13 @@ with tab_farol:
                 name="Demanda líquida",
                 orientation="h",
                 marker=dict(color=PINK, cornerradius=4),
-                text=[f"{v:.1f}" for v in detail["demanda_liquida"]],
+                text=[f"{v:.0f}" for v in detail["demanda_liquida"]],
                 textposition="outside",
                 cliponaxis=False,
                 customdata=list(zip(detail["demanda_bruta_fte"], detail["desalocado_fte"])),
                 hovertemplate=(
-                    "<b>%{y}</b><br>Pedido dos projetos: <b>%{customdata[0]:.1f}</b><br>"
-                    "− Desalocados (realocáveis): <b>%{customdata[1]:.1f}</b><br>"
+                    "<b>%{y}</b><br>Source Request: <b>%{customdata[0]:.0f}</b><br>"
+                    "− Desalocados (realocáveis): <b>%{customdata[1]:.0f}</b><br>"
                     "= Demanda líquida: <b>%{text}</b> pessoas<extra></extra>"
                 ),
             )
@@ -1844,7 +1847,7 @@ with tab_farol:
                 name="Oferta ajustada",
                 orientation="h",
                 marker=dict(color=ARTEFACT_BLUE if THEME == "light" else "#6F86FF", cornerradius=4),
-                text=[f"{v:.1f}" for v in detail["oferta_ajustada"]],
+                text=[f"{v:.0f}" for v in detail["oferta_ajustada"]],
                 textposition="outside",
                 cliponaxis=False,
                 hovertemplate="<b>%{y}</b><br>Oferta ajustada: <b>%{text}</b> pessoas<extra></extra>",
@@ -1888,26 +1891,26 @@ with tab_farol:
             f"{g:+.0f}%" if pd.notna(g) and d >= 1 else "—"
             for g, d in zip(tbl["gap_pct"], tbl["demanda_liquida"])
         ]
-        tbl["demanda_bruta_fte"] = tbl["demanda_bruta_fte"].map(lambda v: f"{v:.1f}")
-        tbl["desalocado_fte"] = tbl["desalocado_fte"].map(lambda v: f"−{v:.1f}" if v else "0.0")
-        tbl["demanda_liquida"] = tbl["demanda_liquida"].map(lambda v: f"{v:.1f}")
-        tbl["oferta_ajustada"] = tbl["oferta_ajustada"].map(lambda v: f"{v:.1f}")
+        tbl["demanda_bruta_fte"] = tbl["demanda_bruta_fte"].map(lambda v: f"{v:.0f}")
+        tbl["desalocado_fte"] = tbl["desalocado_fte"].map(lambda v: f"−{v:.0f}" if v else "0")
+        tbl["demanda_liquida"] = tbl["demanda_liquida"].map(lambda v: f"{v:.0f}")
+        tbl["oferta_ajustada"] = tbl["oferta_ajustada"].map(lambda v: f"{v:.0f}")
         tbl["farol_status"] = tbl["farol_status"].map(lambda s: f"{STATUS_ICON[s]} {STATUS_LABEL[s]}")
         tbl = tbl[
             ["senioridade", "demanda_bruta_fte", "desalocado_fte", "demanda_liquida", "oferta_ajustada",
              "falta_sobra", "gap_pct", "farol_status"]
         ]
         tbl.columns = [
-            "Senioridade", "Pedido dos projetos", "Desalocados", "Demanda líquida", "Oferta ajustada",
+            "Senioridade", "Source Request", "Desalocados", "Demanda líquida", "Oferta ajustada",
             "Falta / sobra", "Gap %", "Status",
         ]
         render_table(
             tbl,
-            numeric_cols={"Pedido dos projetos", "Desalocados", "Demanda líquida", "Oferta ajustada", "Gap %"},
+            numeric_cols={"Source Request", "Desalocados", "Demanda líquida", "Oferta ajustada", "Gap %"},
             help_map={
-                "Pedido dos projetos": "Quanto os projetos pedem de gente no mês (Artefactory, em FTE).",
+                "Source Request": "Quanto os projetos pedem de gente no mês (Artefactory, em FTE; 1 FTE = 1 contratação).",
                 "Desalocados": "Pessoas que saem de projeto no mês e podem ser realocadas, em vez de contratar (Artefactory).",
-                "Demanda líquida": "Pedido dos projetos menos desalocados: o que sobra para contratar.",
+                "Demanda líquida": "Source Request menos desalocados: o que sobra para contratar.",
                 "Oferta ajustada": "Candidatos vivos do Envio do Case em diante, cada um pesado pela chance de virar contratação em até 45 dias.",
                 "Gap %": "(Demanda − Oferta) / Demanda. Só aparece com demanda de 1 pessoa ou mais.",
                 "Status": "Diferença menor que 1 pessoa = manter. Demanda zero ou negativa = pausar. Senão: acima de +20% acelerar, abaixo de −10% pausar.",
@@ -2501,7 +2504,7 @@ with tab_ajuda:
     _secao("🗂️", "As abas", "Cada uma responde a uma pergunta.")
     abas = [
         ("🧭", "Visão Gerencial", "Quanto falta contratar no mês e com que velocidade o funil entrega?",
-         "Necessidade líquida, pipe qualificado, tempo médio de contratação e aceite de oferta. "
+         "Necessidade líquida, Pipeline Qualificado, tempo médio de contratação e aceite de oferta. "
          "O mês escolhido aqui é o mesmo do Farol Executivo."),
         ("🚦", "Farol Executivo", "Devo abrir, manter ou pausar vagas? Em qual carreira e senioridade?",
          "Matriz carreira × senioridade e o detalhe de demanda × oferta de cada chapter. "
@@ -2543,15 +2546,16 @@ with tab_ajuda:
         unsafe_allow_html=True,
     )
     _termos([
-        ("Pedido dos projetos",
+        ("Source Request",
          "Quanto os projetos pedem de gente no mês, segundo o Artefactory. Vem em FTE: 1 FTE é uma pessoa "
-         "em tempo integral, 0,5 é meio período."),
+         "em tempo integral. Confirmado: <b>1 FTE = 1 contratação</b>. O farol mostra tudo em números "
+         "inteiros, arredondando meio para cima."),
         ("Desalocados",
          "Pessoas que saem de projeto no mês, na mesma carreira e nível, e podem ser realocadas em vez de "
          "contratar alguém. Também vêm do Artefactory."),
         ("Demanda líquida",
-         "Pedido dos projetos menos desalocados: o que sobra para contratar. É ela que o farol compara com a "
-         "oferta, e o app trata 1 FTE como 1 pessoa. Fica negativa quando sai mais gente de projeto do que "
+         "Source Request menos desalocados: o que sobra para contratar. É ela que o farol compara com a "
+         "oferta. Fica negativa quando sai mais gente de projeto do que "
          "entra. A matriz, o detalhe e a Visão Gerencial mostram as três partes."),
         ("Oferta ajustada",
          f"Quantas contratações o pipe de hoje deve entregar em até {HORIZONTE_FAROL_DIAS} dias. Soma os "
@@ -2563,15 +2567,18 @@ with tab_ajuda:
         ("Status por senioridade",
          "Somar as senioridades esconde decisões opostas: um chapter pode sobrar Entry e faltar Senior ao "
          "mesmo tempo. Por isso o \"Total do chapter\" mostra só os números, sem status."),
-        ("Entry, Senior e Estagiário",
-         "A decisão de contratação olha Entry e Senior. Estagiário aparece apagado, para acompanhamento, "
-         "porque segue o ritmo das turmas de estágio. Entry inclui os níveis Entry e Associate do Artefactory "
+        ("Entry e Senior",
+         "O farol olha só Entry e Senior. Estagiário fica fora, porque segue o ritmo das turmas de estágio, "
+         "e aparece só na Visão do Pipe. Entry inclui os níveis Entry e Associate do Artefactory "
          "e as vagas do Greenhouse sem nível no nome."),
         ("Mês da demanda",
          f"Só a demanda muda com o mês. O app mostra o mês atual e os {JANELA_MESES} seguintes. O pipe é "
          "sempre a foto de hoje, então a oferta é a mesma em todos os meses."),
-        ("Pipe qualificado",
-         "Candidatos vivos hoje da Entrevista Fit até a Oferta, ou seja, quem já passou da triagem e do case."),
+        ("Pipeline Qualificado",
+         "Candidatos Entry e Senior vivos hoje da <b>Entrevista Fit</b> até a Oferta (Entrevista Fit, Técnica 1, "
+         "Técnica 2, Conversa Final e Oferta), ou seja, quem já passou da triagem e do case. É contagem de "
+         "pessoas. A Oferta é outra conta: começa no Envio do Case e pesa cada candidato pela chance de "
+         f"contratar em até {HORIZONTE_FAROL_DIAS} dias, por isso sai menor."),
     ])
 
     # ---- conversões e tempos ---------------------------------------------
@@ -2631,7 +2638,7 @@ with tab_ajuda:
     _secao("🗄️", "De onde vêm os dados")
     fontes = [
         ("Demanda", "Artefactory",
-         "Pedidos de projeto e desalocações, carregados por upload manual no BigQuery. O farol fica tão "
+         "Source Request (pedidos dos projetos) e desalocações, carregados por upload manual no BigQuery. O farol fica tão "
          "atual quanto o último upload."),
         ("Pipe", "Greenhouse",
          f"Foto do dia (hoje: <b>{DATA_SNAPSHOT}</b>). O Greenhouse não guarda histórico por etapa, então não "
@@ -2664,9 +2671,6 @@ with tab_ajuda:
         ("Etapas desatualizadas",
          "Quem avançou ou foi contratado sem a etapa atualizada no Greenhouse aparece como parado e distorce "
          "tempos e gargalos. Confira no Greenhouse antes de agir."),
-        ("Premissa a confirmar",
-         "A demanda vem em FTE (alocação fracionada) e o pipe vem em pessoas. O app trata 1 FTE como 1 "
-         "contratação, o que ainda falta confirmar com Staffing."),
         ("Senioridade pelo nome da vaga",
          "O Greenhouse não tem campo de senioridade, então ela sai do nome da vaga. Vaga sem nível no nome "
          f"aparece como \"{SEM_SENIORIDADE}\" e fica fora do farol."),
